@@ -46,8 +46,24 @@ Cursor does **not** expose token counts inside chat transcripts. The `stop` hook
 
 ## Install
 
+### One-liner (no clone)
+
 ```bash
-git clone git@github.com:SebberSky/cursor-token-usage.git
+curl -fsSL https://raw.githubusercontent.com/SebberSky/cursor-token-usage/main/install.sh | bash
+```
+
+Optional pins:
+
+```bash
+# specific branch/tag
+curl -fsSL https://raw.githubusercontent.com/SebberSky/cursor-token-usage/main/install.sh \
+  | TOKEN_USAGE_REF=main bash
+```
+
+### From a clone
+
+```bash
+git clone https://github.com/SebberSky/cursor-token-usage.git
 cd cursor-token-usage
 ./install.sh
 ```
