@@ -1,0 +1,7 @@
+.DS_Store
+*.vsix
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+*.log
