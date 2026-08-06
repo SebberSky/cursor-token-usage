@@ -288,7 +288,20 @@ def format_check_message(state: dict[str, Any]) -> str:
         cmd = state.get("install_command") or ""
         return (
             f"Update available: {installed} → {latest} ({channel})\n"
-            f"Install:\n  {cmd}"
+            f"Install now:\n  {cmd}\n"
+            f"Or: python3 ~/.cursor/plugins/token-usage/view.py check-update --install"
         )
     cached = " (cached)" if state.get("cached") else ""
     return f"Up to date: {installed} ({channel}) · latest {latest}{cached}"
+
+
+def run_install_command(state: dict[str, Any]) -> int:
+    import subprocess
+
+    cmd = state.get("install_command")
+    if not cmd:
+        print("No install command available.")
+        return 1
+    print(f"Running:\n  {cmd}\n")
+    completed = subprocess.run(cmd, shell=True)
+    return int(completed.returncode or 0)

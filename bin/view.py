@@ -604,7 +604,7 @@ def cmd_version() -> None:
     print("cursor-token-usage (version unknown — not installed?)")
 
 
-def cmd_check_update(*, force: bool = True, dismiss: bool = False) -> int:
+def cmd_check_update(*, force: bool = True, dismiss: bool = False, install: bool = False) -> int:
     if _UPDATE is None:
         print("Update checker module missing. Re-run install.sh.")
         return 1
@@ -622,6 +622,13 @@ def cmd_check_update(*, force: bool = True, dismiss: bool = False) -> int:
     update_path = Path.home() / ".cursor" / "plugins" / "token-usage" / "update-check.json"
     if update_path.exists():
         print(f"state: {update_path}")
+    if install:
+        if not state.get("ok"):
+            return 1
+        if not state.get("update_available"):
+            print("Nothing to install (already up to date).")
+            return 0
+        return int(_UPDATE.run_install_command(state))
     if state.get("update_available"):
         return 2
     return 0 if state.get("ok") or state.get("skipped") else 1
@@ -671,6 +678,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         action="store_true",
         help="with check-update: dismiss current update alert",
     )
+    parser.add_argument(
+        "--install",
+        action="store_true",
+        help="with check-update: run the install one-liner when an update is available",
+    )
     args = parser.parse_args(argv)
 
     if args.command == "path":
@@ -683,7 +695,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         cmd_version()
         return 0
     if args.command == "check-update":
-        return cmd_check_update(force=args.force or True, dismiss=args.dismiss)
+        return cmd_check_update(
+            force=args.force or True,
+            dismiss=args.dismiss,
+            install=args.install,
+        )
     if args.command == "latest":
         cmd_latest(expand=args.expand, markdown=args.markdown)
         return 0

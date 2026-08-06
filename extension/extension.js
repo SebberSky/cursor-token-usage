@@ -608,20 +608,107 @@ async function maybeAlertUpdate(state) {
   const installed = state.installed_version || "unknown";
   const choice = await vscode.window.showInformationMessage(
     `Token Usage update available: ${installed} → ${latest} (${state.channel})`,
-    "Copy install command",
+    "Install now",
     "Dismiss"
   );
   const next = { ...state, alerted_version: latest };
   if (choice === "Dismiss") {
     next.dismissed_version = latest;
   }
-  if (choice === "Copy install command" && state.install_command) {
-    await vscode.env.clipboard.writeText(state.install_command);
-    vscode.window.setStatusBarMessage("Install command copied", 2500);
-  }
   writeJson(UPDATE_STATE, next);
   lastUpdateState = next;
   refresh();
+  if (choice === "Install now") {
+    await runInstallUpdate(state);
+  }
+}
+
+/**
+ * Run channel install command (same as install.sh one-liner) then prompt reload.
+ * @param {any} state
+ * @returns {Promise<boolean>}
+ */
+async function runInstallUpdate(state) {
+  const cmd = state && state.install_command;
+  if (!cmd) {
+    vscode.window.showWarningMessage("No install command available for this update.");
+    return false;
+  }
+  const latest = state.latest_version || "latest";
+  const channel = state.channel || "stable";
+  const confirm = await vscode.window.showWarningMessage(
+    `Install Token Usage ${latest} (${channel}) now?\n\nThis runs:\n${cmd}`,
+    { modal: true },
+    "Install"
+  );
+  if (confirm !== "Install") {
+    return false;
+  }
+
+  const ok = await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: `Installing Token Usage ${latest}…`,
+      cancellable: false,
+    },
+    () =>
+      new Promise((resolve) => {
+        const { exec } = require("child_process");
+        exec(
+          cmd,
+          {
+            shell: process.env.SHELL || "/bin/bash",
+            env: process.env,
+            maxBuffer: 12 * 1024 * 1024,
+            timeout: 180_000,
+          },
+          (err, stdout, stderr) => {
+            const out = getOutputChannel();
+            out.appendLine(`$ ${cmd}`);
+            if (stdout) {
+              out.appendLine(String(stdout).trimEnd());
+            }
+            if (stderr) {
+              out.appendLine(String(stderr).trimEnd());
+            }
+            if (err) {
+              out.show(true);
+              vscode.window.showErrorMessage(
+                `Token Usage install failed: ${err.message}`
+              );
+              resolve(false);
+              return;
+            }
+            resolve(true);
+          }
+        );
+      })
+  );
+
+  if (!ok) {
+    return false;
+  }
+
+  const next = {
+    ...state,
+    update_available: false,
+    installed_version: state.latest_version || state.installed_version,
+    alerted_version: state.latest_version || state.alerted_version,
+    dismissed_version: state.latest_version || state.dismissed_version,
+    checked_at: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
+  };
+  writeJson(UPDATE_STATE, next);
+  lastUpdateState = next;
+  refresh();
+
+  const reload = await vscode.window.showInformationMessage(
+    `Token Usage ${latest} installed. Reload Window to apply the extension.`,
+    "Reload Window"
+  );
+  if (reload === "Reload Window") {
+    await vscode.commands.executeCommand("workbench.action.reloadWindow");
+  }
+  return true;
 }
 
 async function showUpdateDetails(state, { interactive = true } = {}) {
@@ -653,12 +740,12 @@ async function showUpdateDetails(state, { interactive = true } = {}) {
   }
   const choice = await vscode.window.showInformationMessage(
     msg,
-    "Copy install command",
+    "Install now",
     "Dismiss"
   );
-  if (choice === "Copy install command" && state.install_command) {
-    await vscode.env.clipboard.writeText(state.install_command);
-    vscode.window.setStatusBarMessage("Install command copied", 2500);
+  if (choice === "Install now") {
+    await runInstallUpdate(state);
+    return;
   }
   if (choice === "Dismiss") {
     const next = {
@@ -857,7 +944,7 @@ async function showMenu() {
         ? `${updateState.installed_version} → ${updateState.latest_version}`
         : versionSummary(),
       detail: updateReady
-        ? "Copy install command or dismiss"
+        ? "Install now or dismiss"
         : "เช็ก channel บน GitHub ว่ามีเวอร์ชันใหม่ไหม",
       action: "update",
     },

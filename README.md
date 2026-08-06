@@ -116,7 +116,7 @@ python3 ~/.cursor/plugins/token-usage/view.py check-update
 The status bar extension checks the active channel pointer on GitHub (default every **12 hours**):
 
 - status bar shows `$(cloud-download)` when an update is available
-- toast once per newer version: **Copy install command** / **Dismiss**
+- toast once per newer version: **Install now** / **Dismiss** (runs `install.sh` for you)
 - menu: **Check for updates** (or **Update available…**)
 - command palette: `Token Usage: Check for Updates`
 

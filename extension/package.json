@@ -2,7 +2,7 @@
   "name": "token-usage-statusbar",
   "displayName": "Token Usage Status Bar",
   "description": "Shows per-repo Cursor Agent token usage on the IDE status bar",
-  "version": "0.2.1008",
+  "version": "0.2.1009",
   "publisher": "guyrocker",
   "engines": {
     "vscode": "^1.80.0"
