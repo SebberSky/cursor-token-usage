@@ -1,8 +1,9 @@
 {
   "channel": "stable",
-  "version": "0.2.0",
-  "tag": "v0.2.0",
-  "ref": "v0.2.0",
-  "published_at": "2026-08-06T12:55:26Z",
-  "extension_version": "0.2.0"
+  "version": "0.2.1",
+  "tag": "v0.2.1",
+  "ref": "v0.2.1",
+  "published_at": "2026-08-06T12:56:02Z",
+  "extension_version": "0.2.1010",
+  "notes": "Stable with Install-now + unit menu; VSIX version monotonic for upgrades from 0.2.1xxx locals"
 }
