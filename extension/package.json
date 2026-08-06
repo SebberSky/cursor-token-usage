@@ -2,7 +2,7 @@
   "name": "token-usage-statusbar",
   "displayName": "Token Usage Status Bar",
   "description": "Shows per-repo Cursor Agent token usage on the IDE status bar",
-  "version": "0.0.2",
+  "version": "0.2.1002",
   "publisher": "guyrocker",
   "engines": {
     "vscode": "^1.80.0"
@@ -18,12 +18,56 @@
     "commands": [
       {
         "command": "tokenUsage.showLatest",
-        "title": "Token Usage: Show Latest Details"
+        "title": "Token Usage: Show Menu"
       },
       {
         "command": "tokenUsage.refresh",
         "title": "Token Usage: Refresh Status Bar"
+      },
+      {
+        "command": "tokenUsage.pickUnitAppearance",
+        "title": "Token Usage: Unit Appearance"
+      },
+      {
+        "command": "tokenUsage.checkForUpdates",
+        "title": "Token Usage: Check for Updates"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Token Usage",
+      "properties": {
+        "tokenUsage.statusBarUnit": {
+          "type": "string",
+          "default": "both",
+          "enum": [
+            "tokens",
+            "cost",
+            "both"
+          ],
+          "enumDescriptions": [
+            "Show token counts only",
+            "Show estimated USD cost only",
+            "Show tokens and estimated USD cost"
+          ],
+          "description": "Unit appearance for the Token Usage status bar item"
+        },
+        "tokenUsage.checkForUpdates": {
+          "type": "boolean",
+          "default": true,
+          "description": "Periodically check GitHub channel releases for updates and alert when a newer version is available"
+        },
+        "tokenUsage.updateCheckIntervalHours": {
+          "type": "number",
+          "default": 12,
+          "minimum": 0,
+          "description": "Minimum hours between automatic update checks (0 = check every timer tick)"
+        },
+        "tokenUsage.channelSourceRef": {
+          "type": "string",
+          "default": "main",
+          "description": "Git branch used to read channels/stable.json and channels/beta.json"
+        }
+      }
+    }
   }
 }

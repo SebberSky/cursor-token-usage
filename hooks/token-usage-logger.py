@@ -28,6 +28,60 @@ PRIOR_WARNING = (
 )
 
 
+def _load_cost_module():
+    """Load shared cost estimator (plugin dir, next to this file, or repo bin/)."""
+    import importlib.util
+
+    candidates = [
+        HOME / ".cursor" / "plugins" / "token-usage" / "token_usage_cost.py",
+        Path(__file__).resolve().parent / "token_usage_cost.py",
+        Path(__file__).resolve().parent.parent / "bin" / "token_usage_cost.py",
+    ]
+    for path in candidates:
+        if not path.is_file():
+            continue
+        try:
+            spec = importlib.util.spec_from_file_location("token_usage_cost", path)
+            if spec is None or spec.loader is None:
+                continue
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod
+        except Exception:
+            continue
+    return None
+
+
+_COST = _load_cost_module()
+
+
+def estimate_turn(turn: dict) -> Optional[dict]:
+    if _COST is None:
+        return None
+    try:
+        return _COST.estimate_turn_cost(turn)
+    except Exception:
+        return None
+
+
+def estimate_turns(turns: list) -> Optional[dict]:
+    if _COST is None:
+        return None
+    try:
+        return _COST.estimate_turns_cost(turns)
+    except Exception:
+        return None
+
+
+def cost_text(est: Optional[dict], *, compact: bool = False) -> str:
+    if _COST is None or not est:
+        return ""
+    try:
+        return _COST.cost_suffix(est, compact=compact)
+    except Exception:
+        return ""
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
@@ -351,6 +405,7 @@ def update_index(chat: dict) -> None:
     if not isinstance(chats, dict):
         chats = {}
     cid = chat["conversation_id"]
+    chat_cost = estimate_turns(list(chat.get("turns") or []))
     chats[cid] = {
         "conversation_id": cid,
         "short_id": short_id(cid),
@@ -358,6 +413,7 @@ def update_index(chat: dict) -> None:
         "model": chat.get("model_id") or chat.get("model"),
         "turn_count": chat.get("turn_count", 0),
         "total_tokens": (chat.get("totals") or {}).get("total_tokens", 0),
+        "estimated_cost_usd": (chat_cost or {}).get("usd"),
         "updated_at": chat.get("updated_at"),
         "started_at": chat.get("started_at"),
         "prior_untracked": bool(chat.get("prior_untracked")),
@@ -369,11 +425,52 @@ def update_index(chat: dict) -> None:
     atomic_write_json(INDEX_PATH, index)
 
 
+def repo_cost_for_workspace(workspace: Optional[str]) -> Optional[dict]:
+    if not workspace or _COST is None:
+        return None
+    index = read_json(INDEX_PATH, {"chats": {}})
+    chats = index.get("chats") if isinstance(index, dict) else {}
+    if not isinstance(chats, dict):
+        return None
+    total = 0.0
+    known = 0
+    unknown = 0
+    for meta in chats.values():
+        if not isinstance(meta, dict) or meta.get("workspace") != workspace:
+            continue
+        path = meta.get("path")
+        chat = read_json(Path(path), None) if path else None
+        if not isinstance(chat, dict):
+            continue
+        est = estimate_turns(list(chat.get("turns") or []))
+        if not est:
+            continue
+        if est.get("known") and est.get("usd") is not None:
+            total += float(est["usd"])
+            known += int(est.get("known_turns") or 0)
+        unknown += int(est.get("unknown_turns") or 0)
+    if known <= 0:
+        return {"usd": None, "known": False, "known_turns": 0, "unknown_turns": unknown}
+    return {
+        "usd": round(total, 6),
+        "known": True,
+        "known_turns": known,
+        "unknown_turns": unknown,
+    }
+
+
 def build_brief_text(chat: dict, turn: dict) -> str:
     """Compact one-liner for notifications and default display."""
     turn_total = turn.get("total_tokens")
     chat_total = (chat.get("totals") or {}).get("total_tokens")
-    text = f"prompt นี้ใช้ไป {fmt(turn_total)} tokens · รวม {fmt(chat_total)} tokens"
+    turn_cost = estimate_turn(turn)
+    chat_cost = estimate_turns(list(chat.get("turns") or []))
+    text = (
+        f"prompt นี้ใช้ไป {fmt(turn_total)} tokens"
+        f"{cost_text(turn_cost)}"
+        f" · รวม {fmt(chat_total)} tokens"
+        f"{cost_text(chat_cost)}"
+    )
     if chat.get("prior_untracked"):
         text += " · มีประวัติก่อน hook"
     return text
@@ -390,13 +487,24 @@ def fmt_compact(n: Optional[int]) -> str:
     return str(n)
 
 
-def build_status_text(chat: dict, turn: dict, repo_total: Optional[int] = None) -> str:
+def build_status_text(
+    chat: dict,
+    turn: dict,
+    repo_total: Optional[int] = None,
+    repo_cost: Optional[dict] = None,
+) -> str:
     """Short label for the IDE status bar (current repo only)."""
     turn_total = turn.get("total_tokens")
     chat_total = (chat.get("totals") or {}).get("total_tokens")
-    text = f"+{fmt_compact(turn_total)} · chat Σ{fmt_compact(chat_total)}"
+    turn_cost = estimate_turn(turn)
+    chat_cost = estimate_turns(list(chat.get("turns") or []))
+    text = f"+{fmt_compact(turn_total)}"
+    text += cost_text(turn_cost, compact=True)
+    text += f" · chat Σ{fmt_compact(chat_total)}"
+    text += cost_text(chat_cost, compact=True)
     if repo_total is not None:
         text += f" · repo Σ{fmt_compact(repo_total)}"
+        text += cost_text(repo_cost, compact=True)
     if chat.get("prior_untracked"):
         text += " · prior"
     return text
@@ -407,12 +515,15 @@ def build_detail_text(chat: dict, turn: dict, repo_info: Optional[dict] = None) 
     turn_n = chat.get("turn_count", 0)
     turn_total = turn.get("total_tokens")
     chat_total = (chat.get("totals") or {}).get("total_tokens")
+    turn_cost = estimate_turn(turn)
+    chat_cost = estimate_turns(list(chat.get("turns") or []))
     lines = [
         f"Token usage · {ws} · chat {short_id(chat.get('conversation_id'))}",
         (
             f"Turn {turn_n}: "
             f"+{fmt(turn_total)} "
             f"(in {fmt(turn.get('prompt_tokens'))} / out {fmt(turn.get('output_tokens'))})"
+            f"{cost_text(turn_cost)}"
         ),
         (
             f"  input={fmt(turn.get('input_tokens'))}  "
@@ -424,9 +535,29 @@ def build_detail_text(chat: dict, turn: dict, repo_info: Optional[dict] = None) 
             f"across {turn_n} tracked turn{'s' if turn_n != 1 else ''} "
             f"(in {fmt((chat.get('totals') or {}).get('prompt_tokens'))} / "
             f"out {fmt((chat.get('totals') or {}).get('output_tokens'))})"
+            f"{cost_text(chat_cost)}"
         ),
         f"model: {chat.get('model_id') or chat.get('model') or '-'}",
     ]
+    if turn_cost:
+        label = turn_cost.get("label") or turn_cost.get("model_key") or "-"
+        if turn_cost.get("known"):
+            lines.append(f"est. rate: {label} (list $/M tokens · approximate)")
+            parts = turn_cost.get("parts_usd") or {}
+            if parts:
+                lines.append(
+                    "  est. parts: "
+                    f"in={parts.get('input')}  "
+                    f"out={parts.get('output')}  "
+                    f"cache_read={parts.get('cache_read')}  "
+                    f"cache_write={parts.get('cache_write')}"
+                )
+            if turn_cost.get("assumed_default"):
+                lines.append("  note: model=default → estimating with Auto Cost rates")
+        else:
+            reason = turn_cost.get("reason") or "no rate"
+            lines.append(f"est. cost: unavailable ({label}: {reason})")
+        lines.append("  source: cursor.com/docs/models-and-pricing (not invoice)")
     preview = turn.get("prompt_preview")
     if preview:
         lines.append(f"prompt: {preview}")
@@ -435,9 +566,11 @@ def build_detail_text(chat: dict, turn: dict, repo_info: Optional[dict] = None) 
         lines.append(f"⚠ {warning}")
     if repo_info:
         repo_totals = repo_info.get("totals") or {}
+        repo_cost = repo_cost_for_workspace(chat.get("workspace"))
         lines.append(
             f"repo total: {fmt(repo_totals.get('total_tokens'))} "
             f"across {repo_info.get('chat_count', 0)} chat(s)"
+            f"{cost_text(repo_cost)}"
         )
     return "\n".join(lines)
 
@@ -546,9 +679,14 @@ def write_latest(text: str, chat: dict, turn: dict) -> None:
     workspace = chat.get("workspace")
     repo_info = repo_totals_for_workspace(workspace)
     repo_total = (repo_info.get("totals") or {}).get("total_tokens")
+    turn_cost = estimate_turn(turn)
+    chat_cost = estimate_turns(list(chat.get("turns") or []))
+    repo_cost = repo_cost_for_workspace(workspace)
     brief = build_brief_text(chat, turn)
     detail = build_detail_text(chat, turn, repo_info=repo_info)
-    status = build_status_text(chat, turn, repo_total=repo_total)
+    status = build_status_text(
+        chat, turn, repo_total=repo_total, repo_cost=repo_cost
+    )
     payload = {
         "ts": utc_now(),
         "brief": brief,
@@ -557,6 +695,8 @@ def write_latest(text: str, chat: dict, turn: dict) -> None:
         "summary": text,
         "conversation_id": chat.get("conversation_id"),
         "turn": turn,
+        "turn_cost": turn_cost,
+        "chat_cost": chat_cost,
         "chat_totals": chat.get("totals"),
         "turn_count": chat.get("turn_count"),
         "prior_untracked": bool(chat.get("prior_untracked")),
@@ -564,6 +704,7 @@ def write_latest(text: str, chat: dict, turn: dict) -> None:
         "workspace": workspace,
         "repo_chat_count": repo_info.get("chat_count", 0),
         "repo_totals": repo_info.get("totals"),
+        "repo_cost": repo_cost,
     }
 
     # Global latest (debugging / last event anywhere).
@@ -714,6 +855,7 @@ def handle_stop(payload: dict) -> dict:
     atomic_write_json(chat_path(conversation_id), chat)
     update_index(chat)
 
+    turn_cost = estimate_turn(turn)
     record = {
         "ts": turn["ts"],
         "event": "stop",
@@ -739,6 +881,8 @@ def handle_stop(payload: dict) -> dict:
         "chat_total_tokens": chat["totals"]["total_tokens"],
         "prior_untracked": bool(chat.get("prior_untracked")),
         "prior_untracked_turns": chat.get("prior_untracked_turns") or 0,
+        "estimated_cost_usd": (turn_cost or {}).get("usd"),
+        "estimated_cost": turn_cost,
     }
     append_jsonl(record)
 
@@ -783,11 +927,17 @@ def handle_session_end(payload: dict) -> dict:
 
     totals = chat.get("totals") or {}
     last = (chat.get("turns") or [{}])[-1]
-    brief = f"ปิดแชท · รวม {fmt(totals.get('total_tokens'))} tokens · {chat.get('turn_count')} turns"
+    chat_cost = estimate_turns(list(chat.get("turns") or []))
+    brief = (
+        f"ปิดแชท · รวม {fmt(totals.get('total_tokens'))} tokens"
+        f"{cost_text(chat_cost)}"
+        f" · {chat.get('turn_count')} turns"
+    )
     detail = (
         f"Session ended · chat {short_id(conversation_id)} · "
         f"{chat.get('workspace') or 'workspace'}\n"
-        f"Final total: {fmt(totals.get('total_tokens'))} tokens "
+        f"Final total: {fmt(totals.get('total_tokens'))} tokens"
+        f"{cost_text(chat_cost)} "
         f"over {chat.get('turn_count')} tracked turn(s)"
     )
     warning = prior_warning_text(chat)

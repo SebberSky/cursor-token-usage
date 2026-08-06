@@ -1,0 +1,397 @@
+{
+  "source": "https://cursor.com/docs/models-and-pricing",
+  "source_help": "https://cursor.com/help/account-and-billing/pricing",
+  "updated": "2026-08-06",
+  "unit": "USD per 1M tokens",
+  "notes": [
+    "Estimates only — Cursor dashboard is billing source of truth.",
+    "Auto Cost rates apply when model is default/auto or when TOKEN_USAGE_DEFAULT_RATE=auto_cost.",
+    "First-party Cursor Models (Grok / Composer) have no public list $/token; estimate omitted.",
+    "Teams/Enterprise third-party requests may add Cursor Token Rate $0.25/M (TOKEN_USAGE_CURSOR_TOKEN_RATE=1)."
+  ],
+  "cursor_token_rate_per_m": 0.25,
+  "auto_cost": {
+    "label": "Auto Cost",
+    "pool": "auto_cost",
+    "input": 1.25,
+    "cache_write": 1.25,
+    "cache_read": 0.25,
+    "output": 6.0
+  },
+  "models": {
+    "auto_cost": {
+      "label": "Auto Cost",
+      "pool": "auto_cost",
+      "input": 1.25,
+      "cache_write": 1.25,
+      "cache_read": 0.25,
+      "output": 6.0
+    },
+    "claude-4-sonnet": {
+      "label": "Claude 4 Sonnet",
+      "pool": "other",
+      "input": 3.0,
+      "cache_write": 3.75,
+      "cache_read": 0.3,
+      "output": 15.0
+    },
+    "claude-4-sonnet-1m": {
+      "label": "Claude 4 Sonnet 1M",
+      "pool": "other",
+      "input": 6.0,
+      "cache_write": 7.5,
+      "cache_read": 0.6,
+      "output": 22.5
+    },
+    "claude-4.5-haiku": {
+      "label": "Claude 4.5 Haiku",
+      "pool": "other",
+      "input": 1.0,
+      "cache_write": 1.25,
+      "cache_read": 0.1,
+      "output": 5.0
+    },
+    "claude-4.5-opus": {
+      "label": "Claude 4.5 Opus",
+      "pool": "other",
+      "input": 5.0,
+      "cache_write": 6.25,
+      "cache_read": 0.5,
+      "output": 25.0
+    },
+    "claude-4.5-sonnet": {
+      "label": "Claude 4.5 Sonnet",
+      "pool": "other",
+      "input": 3.0,
+      "cache_write": 3.75,
+      "cache_read": 0.3,
+      "output": 15.0
+    },
+    "claude-4.6-opus": {
+      "label": "Claude 4.6 Opus",
+      "pool": "other",
+      "input": 5.0,
+      "cache_write": 6.25,
+      "cache_read": 0.5,
+      "output": 25.0
+    },
+    "claude-4.6-sonnet": {
+      "label": "Claude 4.6 Sonnet",
+      "pool": "other",
+      "input": 3.0,
+      "cache_write": 3.75,
+      "cache_read": 0.3,
+      "output": 15.0
+    },
+    "claude-4.7-opus": {
+      "label": "Claude 4.7 Opus",
+      "pool": "other",
+      "input": 5.0,
+      "cache_write": 6.25,
+      "cache_read": 0.5,
+      "output": 25.0
+    },
+    "claude-fable-5": {
+      "label": "Claude Fable 5",
+      "pool": "other",
+      "input": 10.0,
+      "cache_write": 12.5,
+      "cache_read": 1.0,
+      "output": 50.0
+    },
+    "claude-opus-4.7-fast": {
+      "label": "Claude Opus 4.7 (fast mode)",
+      "pool": "other",
+      "input": 30.0,
+      "cache_write": 37.5,
+      "cache_read": 3.0,
+      "output": 150.0
+    },
+    "claude-opus-4.8": {
+      "label": "Claude Opus 4.8",
+      "pool": "other",
+      "input": 5.0,
+      "cache_write": 6.25,
+      "cache_read": 0.5,
+      "output": 25.0
+    },
+    "claude-opus-4-8-fast": {
+      "label": "Claude Opus 4.8 Fast",
+      "pool": "other",
+      "input": 5.0,
+      "cache_write": 6.25,
+      "cache_read": 0.5,
+      "output": 25.0
+    },
+    "claude-opus-5": {
+      "label": "Claude Opus 5",
+      "pool": "other",
+      "input": 5.0,
+      "cache_write": 6.25,
+      "cache_read": 0.5,
+      "output": 25.0
+    },
+    "claude-opus-5-fast": {
+      "label": "Claude Opus 5 Fast",
+      "pool": "other",
+      "input": 5.0,
+      "cache_write": 6.25,
+      "cache_read": 0.5,
+      "output": 25.0
+    },
+    "claude-sonnet-5": {
+      "label": "Claude Sonnet 5",
+      "pool": "other",
+      "input": 3.0,
+      "cache_write": 3.75,
+      "cache_read": 0.3,
+      "output": 15.0,
+      "promo_note": "Launch promo $2/M in + $10/M out through 2026-08-31 (not auto-applied)"
+    },
+    "gemini-2.5-flash": {
+      "label": "Gemini 2.5 Flash",
+      "pool": "other",
+      "input": 0.3,
+      "cache_write": null,
+      "cache_read": 0.03,
+      "output": 2.5
+    },
+    "gemini-3-flash": {
+      "label": "Gemini 3 Flash",
+      "pool": "other",
+      "input": 0.5,
+      "cache_write": null,
+      "cache_read": 0.05,
+      "output": 3.0
+    },
+    "gemini-3-pro": {
+      "label": "Gemini 3 Pro",
+      "pool": "other",
+      "input": 2.0,
+      "cache_write": null,
+      "cache_read": 0.2,
+      "output": 12.0
+    },
+    "gemini-3.1-pro": {
+      "label": "Gemini 3.1 Pro",
+      "pool": "other",
+      "input": 2.0,
+      "cache_write": null,
+      "cache_read": 0.2,
+      "output": 12.0
+    },
+    "gemini-3.5-flash": {
+      "label": "Gemini 3.5 Flash",
+      "pool": "other",
+      "input": 1.5,
+      "cache_write": null,
+      "cache_read": 0.15,
+      "output": 9.0
+    },
+    "gemini-3.6-flash": {
+      "label": "Gemini 3.6 Flash",
+      "pool": "other",
+      "input": 1.5,
+      "cache_write": null,
+      "cache_read": 0.15,
+      "output": 7.5
+    },
+    "glm-5.2": {
+      "label": "GLM 5.2",
+      "pool": "other",
+      "input": 1.4,
+      "cache_write": null,
+      "cache_read": 0.26,
+      "output": 4.4
+    },
+    "gpt-5": {
+      "label": "GPT-5",
+      "pool": "other",
+      "input": 1.25,
+      "cache_write": null,
+      "cache_read": 0.125,
+      "output": 10.0
+    },
+    "gpt-5-fast": {
+      "label": "GPT-5 Fast",
+      "pool": "other",
+      "input": 2.5,
+      "cache_write": null,
+      "cache_read": 0.25,
+      "output": 20.0
+    },
+    "gpt-5-mini": {
+      "label": "GPT-5 Mini",
+      "pool": "other",
+      "input": 0.25,
+      "cache_write": null,
+      "cache_read": 0.025,
+      "output": 2.0
+    },
+    "gpt-5-codex": {
+      "label": "GPT-5-Codex",
+      "pool": "other",
+      "input": 1.25,
+      "cache_write": null,
+      "cache_read": 0.125,
+      "output": 10.0
+    },
+    "gpt-5.1-codex": {
+      "label": "GPT-5.1 Codex",
+      "pool": "other",
+      "input": 1.25,
+      "cache_write": null,
+      "cache_read": 0.125,
+      "output": 10.0
+    },
+    "gpt-5.1-codex-max": {
+      "label": "GPT-5.1 Codex Max",
+      "pool": "other",
+      "input": 1.25,
+      "cache_write": null,
+      "cache_read": 0.125,
+      "output": 10.0
+    },
+    "gpt-5.1-codex-mini": {
+      "label": "GPT-5.1 Codex Mini",
+      "pool": "other",
+      "input": 0.25,
+      "cache_write": null,
+      "cache_read": 0.025,
+      "output": 2.0
+    },
+    "gpt-5.2": {
+      "label": "GPT-5.2",
+      "pool": "other",
+      "input": 1.75,
+      "cache_write": null,
+      "cache_read": 0.175,
+      "output": 14.0
+    },
+    "gpt-5.2-codex": {
+      "label": "GPT-5.2 Codex",
+      "pool": "other",
+      "input": 1.75,
+      "cache_write": null,
+      "cache_read": 0.175,
+      "output": 14.0
+    },
+    "gpt-5.3-codex": {
+      "label": "GPT-5.3 Codex",
+      "pool": "other",
+      "input": 1.75,
+      "cache_write": null,
+      "cache_read": 0.175,
+      "output": 14.0
+    },
+    "gpt-5.4": {
+      "label": "GPT-5.4",
+      "pool": "other",
+      "input": 2.5,
+      "cache_write": null,
+      "cache_read": 0.25,
+      "output": 15.0
+    },
+    "gpt-5.4-mini": {
+      "label": "GPT-5.4 Mini",
+      "pool": "other",
+      "input": 0.75,
+      "cache_write": null,
+      "cache_read": 0.075,
+      "output": 4.5
+    },
+    "gpt-5.4-nano": {
+      "label": "GPT-5.4 Nano",
+      "pool": "other",
+      "input": 0.2,
+      "cache_write": null,
+      "cache_read": 0.02,
+      "output": 1.25
+    },
+    "gpt-5.5": {
+      "label": "GPT-5.5",
+      "pool": "other",
+      "input": 5.0,
+      "cache_write": null,
+      "cache_read": 0.5,
+      "output": 30.0
+    },
+    "gpt-5.6-luna": {
+      "label": "GPT-5.6 Luna",
+      "pool": "other",
+      "input": 0.2,
+      "cache_write": 0.25,
+      "cache_read": 0.02,
+      "output": 1.2
+    },
+    "gpt-5.6-sol": {
+      "label": "GPT-5.6 Sol",
+      "pool": "other",
+      "input": 5.0,
+      "cache_write": 6.25,
+      "cache_read": 0.5,
+      "output": 30.0
+    },
+    "gpt-5.6-terra": {
+      "label": "GPT-5.6 Terra",
+      "pool": "other",
+      "input": 2.0,
+      "cache_write": 2.5,
+      "cache_read": 0.2,
+      "output": 12.0
+    },
+    "kimi-k2.7-code": {
+      "label": "Kimi K2.7 Code",
+      "pool": "other",
+      "input": 0.95,
+      "cache_write": null,
+      "cache_read": 0.19,
+      "output": 4.0
+    },
+    "kimi-k3": {
+      "label": "Kimi K3",
+      "pool": "other",
+      "input": 3.0,
+      "cache_write": null,
+      "cache_read": 0.3,
+      "output": 15.0
+    },
+    "grok-4.5": {
+      "label": "Cursor Grok 4.5",
+      "pool": "cursor_models",
+      "public_list_rate": false
+    },
+    "composer-2.5": {
+      "label": "Composer 2.5",
+      "pool": "cursor_models",
+      "public_list_rate": false
+    },
+    "composer": {
+      "label": "Composer",
+      "pool": "cursor_models",
+      "public_list_rate": false
+    }
+  },
+  "aliases": {
+    "default": "auto_cost",
+    "auto": "auto_cost",
+    "auto-cost": "auto_cost",
+    "agent_router": "auto_cost",
+    "cursor-grok-4.5": "grok-4.5",
+    "cursor-grok-4.5-high": "grok-4.5",
+    "cursor-grok-4.5-low": "grok-4.5",
+    "cursor-grok-4.5-medium": "grok-4.5",
+    "grok-4.5-high": "grok-4.5",
+    "composer-2": "composer-2.5",
+    "composer-2.5-fast": "composer-2.5",
+    "claude-sonnet-4": "claude-4-sonnet",
+    "claude-4-sonnet-thinking": "claude-4-sonnet",
+    "claude-opus-4-7-fast": "claude-opus-4.7-fast",
+    "claude-4.7-opus-fast": "claude-opus-4.7-fast",
+    "gpt-5-high": "gpt-5",
+    "gpt-5-high-fast": "gpt-5-fast",
+    "gpt-5-low-fast": "gpt-5-fast",
+    "gpt-5.2-high": "gpt-5.2",
+    "gpt-5.3-codex-high": "gpt-5.3-codex"
+  }
+}

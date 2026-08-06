@@ -1,0 +1,9 @@
+{
+  "channel": "stable",
+  "version": "0.1.0",
+  "tag": "v0.1.0",
+  "ref": "v0.1.0",
+  "published_at": "2026-07-30T00:00:00Z",
+  "extension_version": "0.1.0",
+  "notes": "One-liner install + base hook/CLI/status bar"
+}

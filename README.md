@@ -16,6 +16,7 @@ After each Agent turn finishes, usage is recorded from Cursor’s `stop` hook pa
 - **Prior-history warning** when you continue a chat that existed before the hook was installed (transcript has older prompts that cannot be backfilled)
 - **CLI viewer** + optional `/token-usage` Cursor command
 - **Local only** — data stays under `~/.cursor/token-usage/`
+- **Estimated USD cost** from Cursor list rates (Auto Cost + third-party models)
 
 ## How it works
 
@@ -46,18 +47,31 @@ Cursor does **not** expose token counts inside chat transcripts. The `stop` hook
 
 ## Install
 
-### One-liner (no clone)
+Installers follow a **release channel** (`stable` default, or `beta`). Channel pointers live in [`channels/`](channels/) on `main`.
+
+### Stable (default)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/SebberSky/cursor-token-usage/main/install.sh | bash
 ```
 
-Optional pins:
+### Beta
 
 ```bash
-# specific branch/tag
 curl -fsSL https://raw.githubusercontent.com/SebberSky/cursor-token-usage/main/install.sh \
-  | TOKEN_USAGE_REF=main bash
+  | TOKEN_USAGE_CHANNEL=beta bash
+```
+
+### Pin a version / ref
+
+```bash
+# exact tag
+curl -fsSL https://raw.githubusercontent.com/SebberSky/cursor-token-usage/main/install.sh \
+  | TOKEN_USAGE_REF=v0.1.0 bash
+
+# or flags when running from a checkout
+./install.sh --channel beta
+./install.sh --ref v0.2.0-beta.1
 ```
 
 ### From a clone
@@ -65,7 +79,8 @@ curl -fsSL https://raw.githubusercontent.com/SebberSky/cursor-token-usage/main/i
 ```bash
 git clone https://github.com/SebberSky/cursor-token-usage.git
 cd cursor-token-usage
-./install.sh
+./install.sh                 # installs this tree as-is
+./install.sh --channel beta  # records channel label; files still from local tree
 ```
 
 Then in Cursor:
@@ -75,6 +90,55 @@ Then in Cursor:
 3. Send an Agent prompt, wait for the turn to finish
 4. Check the bottom-right status bar
 
+### Channels & release versions
+
+| Channel | Manifest | Install picks |
+| --- | --- | --- |
+| `stable` | [`channels/stable.json`](channels/stable.json) | production tags (`vX.Y.Z`) |
+| `beta` | [`channels/beta.json`](channels/beta.json) | pre-release tags (`vX.Y.Z-beta.N`) |
+
+| Variable / flag | Meaning |
+| --- | --- |
+| `TOKEN_USAGE_CHANNEL` / `--channel` | `stable` (default) or `beta` |
+| `TOKEN_USAGE_REF` / `--ref` | pin tag/branch/sha (skips channel resolution) |
+| `TOKEN_USAGE_CHANNEL_SOURCE_REF` | branch used to load channel manifests (default `main`) |
+| `TOKEN_USAGE_REPO` | GitHub `owner/repo` |
+
+After install, metadata is written to `~/.cursor/plugins/token-usage/installed.json`.
+
+```bash
+python3 ~/.cursor/plugins/token-usage/view.py version
+python3 ~/.cursor/plugins/token-usage/view.py check-update
+```
+
+### Updates & alerts
+
+The status bar extension checks the active channel pointer on GitHub (default every **12 hours**):
+
+- status bar shows `$(cloud-download)` when an update is available
+- toast once per newer version: **Copy install command** / **Dismiss**
+- menu: **Check for updates** (or **Update available…**)
+- command palette: `Token Usage: Check for Updates`
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `tokenUsage.checkForUpdates` | `true` | enable background checks |
+| `tokenUsage.updateCheckIntervalHours` | `12` | min hours between automatic checks |
+| `tokenUsage.channelSourceRef` | `main` | branch used to read `channels/*.json` |
+
+CLI: `TOKEN_USAGE_CHECK_UPDATES=0` disables Python/CLI checks. Dismiss: `view.py check-update --dismiss`.
+
+### Cut a release (maintainers)
+
+```bash
+./scripts/release.sh 0.2.0 stable           # commit + tag v0.2.0, update channels/stable.json
+./scripts/release.sh 0.3.0-beta.1 beta      # pre-release on beta channel
+./scripts/release.sh 0.2.0 stable --push    # also push commit + tag
+./scripts/release.sh 0.2.0 stable --dry-run
+```
+
+Tree version lives in [`version.json`](version.json). Extension `package.json` version is kept semver-compatible for VSIX.
+
 ### What `install.sh` does
 
 | Piece | Destination |
@@ -82,6 +146,9 @@ Then in Cursor:
 | Hook script | `~/.cursor/hooks/token-usage-logger.py` |
 | Hook config | merges into `~/.cursor/hooks.json` |
 | CLI viewer | `~/.cursor/plugins/token-usage/view.py` |
+| Pricing table | `~/.cursor/plugins/token-usage/pricing.json` (+ `token_usage_cost.py`) |
+| Install meta | `~/.cursor/plugins/token-usage/installed.json` |
+| Update check | `~/.cursor/plugins/token-usage/update-check.json` (+ `token_usage_update.py`) |
 | Slash command | `~/.cursor/commands/token-usage.md` |
 | Status bar extension | installs VSIX into Cursor |
 
@@ -96,13 +163,19 @@ Scoped to the **current folder name** (workspace root basename):
 | `~/git/trueid-office` | trueid-office usage only |
 | `~/git/proxyGuy` | proxyGuy usage only |
 
-Click the status bar item to open details in the **Token Usage** output channel.
+Click the status bar item for a menu:
+
+- **Show details** — opens the **Token Usage** output channel
+- **Copy details**
+- **Unit appearance** — Tokens only · USD only · Tokens + USD (also: setting `tokenUsage.statusBarUnit`)
 
 Format:
 
 ```text
-+<this turn> · chat Σ<this chat> · repo Σ<all chats in repo>
++<this turn> · ~$0.12 · chat Σ<this chat> · ~$1.40 · repo Σ<all chats in repo>
 ```
+
+`$` amounts are **estimates** from [Cursor Models & Pricing](https://cursor.com/docs/models-and-pricing). They are not invoices.
 
 ## CLI
 
@@ -114,6 +187,8 @@ python3 ~/.cursor/plugins/token-usage/view.py chats
 python3 ~/.cursor/plugins/token-usage/view.py chat            # most recent chat
 python3 ~/.cursor/plugins/token-usage/view.py chat 6067cff6   # by id prefix
 python3 ~/.cursor/plugins/token-usage/view.py today
+python3 ~/.cursor/plugins/token-usage/view.py version
+python3 ~/.cursor/plugins/token-usage/view.py check-update
 python3 ~/.cursor/plugins/token-usage/view.py debug
 ```
 
@@ -152,6 +227,10 @@ Environment variables (optional):
 | `TOKEN_USAGE_NOTIFY` | `1` | macOS banner notifications |
 | `TOKEN_USAGE_ALERT` | `0` | blocking alert dialog (not recommended) |
 | `TOKEN_USAGE_FULL_PROMPT` | `0` | store full prompt text (default stores a short preview only) |
+| `TOKEN_USAGE_PRICING` | `1` | estimate USD from published list rates |
+| `TOKEN_USAGE_DEFAULT_RATE` | `auto_cost` | rate key when model is `default` / unknown (`off` to skip) |
+| `TOKEN_USAGE_CURSOR_TOKEN_RATE` | `0` | add Teams/Enterprise `$0.25/M` on third-party models |
+| `TOKEN_USAGE_PRICING_PATH` | (plugin `pricing.json`) | override pricing table path |
 
 Example:
 
@@ -165,6 +244,7 @@ export TOKEN_USAGE_NOTIFY=0
 - **User-level hooks** apply to local Cursor; Cloud Agents use project/team hooks instead
 - Token fields depend on Cursor sending them on `stop` (current Cursor builds do)
 - Status bar updates after the Agent turn completes (`stop`), not mid-stream
+- Cost is an **estimate**: Auto routes as `default` use Auto Cost list rates; first-party models (Grok / Composer) have no public $/token list so cost is omitted; promotions / Max Mode / residency uplift may not match
 
 ## Uninstall
 
@@ -179,11 +259,20 @@ export TOKEN_USAGE_NOTIFY=0
 cursor-token-usage/
   README.md
   install.sh
+  version.json
+  channels/
+    stable.json
+    beta.json
+  scripts/
+    release.sh
   hooks/
     token-usage-logger.py
     hooks.json.example
   bin/
     view.py
+    token_usage_cost.py
+    token_usage_update.py
+    pricing.json
   extension/
     package.json
     extension.js
