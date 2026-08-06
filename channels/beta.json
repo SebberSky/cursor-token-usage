@@ -1,9 +1,9 @@
 {
   "channel": "beta",
-  "version": "0.2.0-beta.2",
-  "tag": "v0.2.0-beta.2",
-  "ref": "v0.2.0-beta.2",
-  "published_at": "2026-08-06T12:30:00Z",
-  "extension_version": "0.2.1002",
-  "notes": "Update checks + alerts; estimated cost; unit appearance"
+  "version": "0.2.0-beta.3",
+  "tag": "v0.2.0-beta.3",
+  "ref": "v0.2.0-beta.3",
+  "published_at": "2026-08-06T12:45:31Z",
+  "extension_version": "0.2.1008",
+  "notes": "Status bar click menu (unit + check-update); no Sigma; normal bar colors; cost estimates; install channels"
 }

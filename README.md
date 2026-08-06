@@ -5,7 +5,7 @@ Track **per-prompt / per-chat / per-repo** token usage for [Cursor](https://curs
 After each Agent turn finishes, usage is recorded from Cursor’s `stop` hook payload and shown on the **IDE status bar** for the repo you currently have open.
 
 ```text
-+277.4k · chat Σ1.75M · repo Σ1.75M
++277.4k · chat 1.75M · repo 1.75M
 ```
 
 ## Features
@@ -163,16 +163,16 @@ Scoped to the **current folder name** (workspace root basename):
 | `~/git/trueid-office` | trueid-office usage only |
 | `~/git/proxyGuy` | proxyGuy usage only |
 
-Click the status bar item for a menu:
+Click the status bar item for one menu:
 
-- **Show details** — opens the **Token Usage** output channel
-- **Copy details**
-- **Unit appearance** — Tokens only · USD only · Tokens + USD (also: setting `tokenUsage.statusBarUnit`)
+- **Unit** — Tokens only · USD only · Tokens + USD
+- **Check for updates** / **Update available…**
+- Show details / copy / installed version
 
 Format:
 
 ```text
-+<this turn> · ~$0.12 · chat Σ<this chat> · ~$1.40 · repo Σ<all chats in repo>
++<this turn> · ~$0.12 · chat <this chat> · ~$1.40 · repo <all chats in repo>
 ```
 
 `$` amounts are **estimates** from [Cursor Models & Pricing](https://cursor.com/docs/models-and-pricing). They are not invoices.

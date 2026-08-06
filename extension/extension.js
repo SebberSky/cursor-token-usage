@@ -249,7 +249,7 @@ function formatStatusFromMetrics(metrics, unit) {
   }
 
   if (showTokens && metrics.chatTokens != null) {
-    parts.push(`chat Σ${fmtCompact(metrics.chatTokens)}`);
+    parts.push(`chat ${fmtCompact(metrics.chatTokens)}`);
   }
   if (showCost) {
     const usd = fmtUsd(metrics.chatCost, { compact: true });
@@ -262,7 +262,7 @@ function formatStatusFromMetrics(metrics, unit) {
 
   if (metrics.repoTokens != null || metrics.repoCost != null) {
     if (showTokens && metrics.repoTokens != null) {
-      parts.push(`repo Σ${fmtCompact(metrics.repoTokens)}`);
+      parts.push(`repo ${fmtCompact(metrics.repoTokens)}`);
     }
     if (showCost) {
       const usd = fmtUsd(metrics.repoCost, { compact: true });
@@ -681,44 +681,39 @@ function refresh() {
   const unit = getStatusUnit();
   const updateState = loadUpdateState();
   const updateReady = Boolean(updateState && updateState.update_available);
-  const icon = updateReady ? "$(cloud-download)" : "$(dashboard)";
+  // Always normal status-bar chrome (no tint / special update colors).
+  const icon = "$(dashboard)";
+  statusBarItem.backgroundColor = undefined;
+  statusBarItem.color = undefined;
 
   if (!names.length) {
     statusBarItem.text = `${icon} tokens —`;
-    statusBarItem.tooltip = updateReady
-      ? `Update available · ${updateState.installed_version} → ${updateState.latest_version}`
-      : "Open a folder to see repo token usage";
-    statusBarItem.backgroundColor = updateReady
-      ? new vscode.ThemeColor("statusBarItem.warningBackground")
-      : undefined;
+    statusBarItem.tooltip = [
+      updateReady
+        ? `Update available · ${updateState.installed_version} → ${updateState.latest_version}`
+        : "Open a folder to see repo token usage",
+      "คลิก: เปลี่ยนหน่วย · Check for updates · รายละเอียด",
+    ].join("\n");
     statusBarItem.show();
     return;
   }
 
   const snap = loadWorkspaceSnapshot(names);
   if (!snap || !(snap.status || snap.brief || snap.data)) {
-    statusBarItem.text = updateReady
-      ? `${icon} update ${updateState.latest_version}`
-      : `${icon} tokens —`;
-    statusBarItem.tooltip = updateReady
-      ? `Update available: ${updateState.installed_version} → ${updateState.latest_version}\nClick for menu`
-      : `No token usage yet for ${names.join(", ")}`;
-    statusBarItem.backgroundColor = updateReady
-      ? new vscode.ThemeColor("statusBarItem.warningBackground")
-      : undefined;
+    statusBarItem.text = `${icon} tokens —`;
+    statusBarItem.tooltip = [
+      updateReady
+        ? `Update available: ${updateState.installed_version} → ${updateState.latest_version}`
+        : `No token usage yet for ${names.join(", ")}`,
+      "คลิก: เปลี่ยนหน่วย · Check for updates · รายละเอียด",
+    ].join("\n");
     statusBarItem.show();
     return;
   }
 
   const labelSource = buildStatusLabel(snap, unit);
-  let label = labelSource.length > 64 ? `${labelSource.slice(0, 61)}…` : labelSource;
-  if (updateReady) {
-    label = `${label} · ↑`;
-  }
+  const label = labelSource.length > 64 ? `${labelSource.slice(0, 61)}…` : labelSource;
   statusBarItem.text = `${icon} ${label || "tokens —"}`;
-  statusBarItem.backgroundColor = updateReady
-    ? new vscode.ThemeColor("statusBarItem.warningBackground")
-    : undefined;
   statusBarItem.tooltip = [
     `repo: ${snap.workspace}`,
     `unit: ${unitLabel(unit)}`,
@@ -730,9 +725,7 @@ function refresh() {
         : "updates: not checked yet",
     snap.brief,
     "",
-    snap.detail,
-    "",
-    "Click for menu / unit / updates",
+    "คลิก: เปลี่ยนหน่วย · Check for updates · รายละเอียด",
   ]
     .filter((line, idx, arr) => !(line === "" && arr[idx - 1] === ""))
     .join("\n");
@@ -783,11 +776,18 @@ async function pickUnitAppearance() {
   const items = UNIT_OPTIONS.map((opt) => ({
     label: `${opt.id === current ? "$(check) " : "$(circle-outline) "}${opt.label}`,
     description: opt.description,
+    detail:
+      opt.id === "tokens"
+        ? "แสดงเฉพาะจำนวน token"
+        : opt.id === "cost"
+          ? "แสดงเฉพาะประมาณราคา USD"
+          : "แสดงทั้ง token และ USD",
     id: opt.id,
   }));
   const picked = await vscode.window.showQuickPick(items, {
-    title: "Token Usage · unit appearance",
-    placeHolder: "How should the status bar show usage?",
+    title: "เปลี่ยนหน่วยบน status bar",
+    placeHolder: "Tokens only · USD only · Tokens + USD",
+    matchOnDescription: true,
   });
   if (!picked) {
     return;
@@ -800,15 +800,71 @@ async function pickUnitAppearance() {
   );
 }
 
+async function runUpdateAction(updateState) {
+  const updateReady = Boolean(updateState && updateState.update_available);
+  if (updateReady) {
+    await showUpdateDetails(updateState, { interactive: true });
+    return;
+  }
+  const state = await checkForUpdate({ force: true, quiet: false });
+  if (state && state.ok && !state.update_available) {
+    vscode.window.showInformationMessage(
+      `Token Usage is up to date: ${state.installed_version || "unknown"} (${state.channel})`
+    );
+  } else if (state && state.ok && state.update_available) {
+    await showUpdateDetails(state, { interactive: true });
+  }
+}
+
+/**
+ * Status-bar click target: unit choices + check update in one menu (no Cmd+Shift+P).
+ */
 async function showMenu() {
   const names = currentWorkspaceNames();
   const snap = loadWorkspaceSnapshot(names);
   const current = getStatusUnit();
   const updateState = loadUpdateState();
   const updateReady = Boolean(updateState && updateState.update_available);
+  const QuickPickItemKind = vscode.QuickPickItemKind || { Separator: -1 };
 
-  /** @type {Array<vscode.QuickPickItem & { action: string }>} */
+  /** @type {Array<vscode.QuickPickItem & { action?: string, unitId?: string }>} */
   const items = [
+    {
+      label: "Unit",
+      kind: QuickPickItemKind.Separator,
+    },
+    ...UNIT_OPTIONS.map((opt) => ({
+      label: `${opt.id === current ? "$(check) " : "$(circle-outline) "}${opt.label}`,
+      description: opt.id === current ? "current" : undefined,
+      detail:
+        opt.id === "tokens"
+          ? "แสดงเฉพาะจำนวน token"
+          : opt.id === "cost"
+            ? "แสดงเฉพาะประมาณราคา USD"
+            : "แสดงทั้ง token และ USD",
+      action: "setUnit",
+      unitId: opt.id,
+    })),
+    {
+      label: "Updates",
+      kind: QuickPickItemKind.Separator,
+    },
+    {
+      label: updateReady
+        ? "$(cloud-download) Update available…"
+        : "$(sync) Check for updates",
+      description: updateReady
+        ? `${updateState.installed_version} → ${updateState.latest_version}`
+        : versionSummary(),
+      detail: updateReady
+        ? "Copy install command or dismiss"
+        : "เช็ก channel บน GitHub ว่ามีเวอร์ชันใหม่ไหม",
+      action: "update",
+    },
+    {
+      label: "Other",
+      kind: QuickPickItemKind.Separator,
+    },
     {
       label: "$(info) Show details",
       description: snap ? snap.workspace : undefined,
@@ -819,44 +875,31 @@ async function showMenu() {
       action: "copy",
     },
     {
-      label: "$(symbol-ruler) Unit appearance…",
-      description: unitLabel(current),
-      detail: "Tokens only · USD only · Tokens + USD",
-      action: "unit",
-    },
-    {
-      label: updateReady
-        ? "$(cloud-download) Update available…"
-        : "$(sync) Check for updates",
-      description: updateReady
-        ? `${updateState.installed_version} → ${updateState.latest_version}`
-        : versionSummary(),
-      detail: updateReady
-        ? "Copy install command or dismiss alert"
-        : "Compare installed version to channel latest",
-      action: "update",
-    },
-    {
       label: "$(versions) Installed version",
       description: versionSummary(),
       action: "version",
     },
     {
-      label: "$(refresh) Refresh",
+      label: "$(refresh) Refresh status bar",
       action: "refresh",
     },
   ];
 
   const picked = await vscode.window.showQuickPick(items, {
     title: `Token Usage · ${versionSummary()}`,
-    placeHolder: "Choose an action",
+    placeHolder: "เปลี่ยนหน่วย · Check for updates · รายละเอียด",
   });
-  if (!picked) {
+  if (!picked || !picked.action) {
     return;
   }
 
-  if (picked.action === "unit") {
-    await pickUnitAppearance();
+  if (picked.action === "setUnit") {
+    await setStatusUnit(/** @type {StatusUnit} */ (picked.unitId));
+    refresh();
+    vscode.window.setStatusBarMessage(
+      `Token Usage unit: ${unitLabel(picked.unitId)}`,
+      2500
+    );
     return;
   }
   if (picked.action === "refresh") {
@@ -864,18 +907,7 @@ async function showMenu() {
     return;
   }
   if (picked.action === "update") {
-    if (updateReady) {
-      await showUpdateDetails(updateState, { interactive: true });
-    } else {
-      const state = await checkForUpdate({ force: true, quiet: false });
-      if (state && state.ok && !state.update_available) {
-        vscode.window.showInformationMessage(
-          `Token Usage is up to date: ${state.installed_version || "unknown"} (${state.channel})`
-        );
-      } else if (state && state.ok && state.update_available) {
-        await showUpdateDetails(state, { interactive: true });
-      }
-    }
+    await runUpdateAction(updateState);
     return;
   }
   if (picked.action === "version") {
@@ -889,11 +921,14 @@ async function showMenu() {
         ? `update: ${updateState.installed_version} → ${updateState.latest_version}`
         : "",
     ].filter(Boolean);
-    vscode.window.showInformationMessage(lines[0], { modal: false }, "Copy").then((choice) => {
-      if (choice === "Copy") {
-        vscode.env.clipboard.writeText(lines.join("\n"));
-      }
-    });
+    const choice = await vscode.window.showInformationMessage(
+      lines[0],
+      { modal: false },
+      "Copy"
+    );
+    if (choice === "Copy") {
+      await vscode.env.clipboard.writeText(lines.join("\n"));
+    }
     return;
   }
 
@@ -924,8 +959,13 @@ async function showMenu() {
  */
 function activate(context) {
   extensionContext = context;
-  statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 1000);
+  // High priority on the right so it sits near other agent/token items.
+  // Click → unit choices + Check for updates (no Command Palette needed).
+  statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 10_000);
   statusBarItem.command = "tokenUsage.showLatest";
+  statusBarItem.name = "Token Usage";
+  statusBarItem.tooltip =
+    "Token Usage — คลิก: เปลี่ยนหน่วย · Check for updates · รายละเอียด";
   context.subscriptions.push(statusBarItem);
   lastUpdateState = readJson(UPDATE_STATE);
 
@@ -934,14 +974,7 @@ function activate(context) {
     vscode.commands.registerCommand("tokenUsage.refresh", refresh),
     vscode.commands.registerCommand("tokenUsage.pickUnitAppearance", pickUnitAppearance),
     vscode.commands.registerCommand("tokenUsage.checkForUpdates", async () => {
-      const state = await checkForUpdate({ force: true, quiet: false });
-      if (state && state.ok && !state.update_available) {
-        vscode.window.showInformationMessage(
-          `Token Usage is up to date: ${state.installed_version || "unknown"} (${state.channel})`
-        );
-      } else if (state && state.ok && state.update_available) {
-        await showUpdateDetails(state, { interactive: true });
-      }
+      await runUpdateAction(loadUpdateState());
     }),
     vscode.workspace.onDidChangeWorkspaceFolders(() => scheduleRefresh()),
     vscode.workspace.onDidChangeConfiguration((e) => {

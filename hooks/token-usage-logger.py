@@ -500,10 +500,10 @@ def build_status_text(
     chat_cost = estimate_turns(list(chat.get("turns") or []))
     text = f"+{fmt_compact(turn_total)}"
     text += cost_text(turn_cost, compact=True)
-    text += f" · chat Σ{fmt_compact(chat_total)}"
+    text += f" · chat {fmt_compact(chat_total)}"
     text += cost_text(chat_cost, compact=True)
     if repo_total is not None:
-        text += f" · repo Σ{fmt_compact(repo_total)}"
+        text += f" · repo {fmt_compact(repo_total)}"
         text += cost_text(repo_cost, compact=True)
     if chat.get("prior_untracked"):
         text += " · prior"
