@@ -3,20 +3,20 @@
   "hooks": {
     "beforeSubmitPrompt": [
       {
-        "command": "/usr/bin/python3 ./hooks/token-usage-logger.py beforeSubmitPrompt",
+        "command": "/usr/bin/python3 $HOME/.cursor/hooks/token-usage-logger.py beforeSubmitPrompt",
         "timeout": 10
       }
     ],
     "stop": [
       {
-        "command": "/usr/bin/python3 ./hooks/token-usage-logger.py stop",
+        "command": "/usr/bin/python3 $HOME/.cursor/hooks/token-usage-logger.py stop",
         "timeout": 10,
         "loop_limit": null
       }
     ],
     "sessionEnd": [
       {
-        "command": "/usr/bin/python3 ./hooks/token-usage-logger.py sessionEnd",
+        "command": "/usr/bin/python3 $HOME/.cursor/hooks/token-usage-logger.py sessionEnd",
         "timeout": 10
       }
     ]

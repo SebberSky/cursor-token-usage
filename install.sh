@@ -336,6 +336,7 @@ write_install_meta
 echo "→ Merging ~/.cursor/hooks.json"
 export TOKEN_USAGE_HOOKS_JSON="${HOOKS_JSON}"
 export TOKEN_USAGE_PYTHON_BIN="${PYTHON_BIN}"
+export TOKEN_USAGE_HOOK_SCRIPT="${HOOKS_DIR}/token-usage-logger.py"
 "${PYTHON_BIN}" - <<'PY'
 import json
 import os
@@ -343,25 +344,27 @@ from pathlib import Path
 
 hooks_path = Path(os.environ["TOKEN_USAGE_HOOKS_JSON"])
 python_bin = os.environ["TOKEN_USAGE_PYTHON_BIN"]
+hook_script = os.environ["TOKEN_USAGE_HOOK_SCRIPT"]
+# Absolute path — Cursor resolves relative commands from $HOME, not ~/.cursor.
 example = {
     "version": 1,
     "hooks": {
         "beforeSubmitPrompt": [
             {
-                "command": f"{python_bin} ./hooks/token-usage-logger.py beforeSubmitPrompt",
+                "command": f"{python_bin} {hook_script} beforeSubmitPrompt",
                 "timeout": 10,
             }
         ],
         "stop": [
             {
-                "command": f"{python_bin} ./hooks/token-usage-logger.py stop",
+                "command": f"{python_bin} {hook_script} stop",
                 "timeout": 10,
                 "loop_limit": None,
             }
         ],
         "sessionEnd": [
             {
-                "command": f"{python_bin} ./hooks/token-usage-logger.py sessionEnd",
+                "command": f"{python_bin} {hook_script} sessionEnd",
                 "timeout": 10,
             }
         ],
@@ -395,6 +398,7 @@ for event, entries in example["hooks"].items():
 
 hooks_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 print(f"  wrote {hooks_path}")
+print(f"  hook   {hook_script}")
 PY
 
 echo "→ Packaging status bar extension"
