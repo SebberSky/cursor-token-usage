@@ -182,12 +182,22 @@ def load_chat_file(conversation_id: str) -> Optional[dict]:
         return None
 
 
+def is_chat_data_file(path: Path) -> bool:
+    """True for per-conversation data files; false for sidecar snapshots."""
+    name = path.name
+    return name.endswith(".json") and not name.endswith(".latest.json")
+
+
 def resolve_chat_id(query: Optional[str]) -> Optional[str]:
     chats = load_index().get("chats") or {}
     if not chats:
         if not CHATS_DIR.exists():
             return None
-        files = sorted(CHATS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        files = sorted(
+            (p for p in CHATS_DIR.glob("*.json") if is_chat_data_file(p)),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
         if not query:
             return files[0].stem if files else None
         matches = [p.stem for p in files if p.stem.startswith(query)]
@@ -227,8 +237,35 @@ def resolve_chat_id(query: Optional[str]) -> Optional[str]:
     return None
 
 
+def dedupe_stops_by_generation(stops: list[dict]) -> list[dict]:
+    """Keep the strongest stop per generation_id (avoids abort+complete double-count)."""
+    best: dict[str, dict] = {}
+    order: list[str] = []
+    passthrough: list[dict] = []
+    for row in stops:
+        gen = row.get("generation_id")
+        if not gen:
+            passthrough.append(row)
+            continue
+        key = str(gen)
+        prev = best.get(key)
+        if prev is None:
+            best[key] = row
+            order.append(key)
+            continue
+        prev_tokens = int(prev.get("total_tokens") or 0)
+        new_tokens = int(row.get("total_tokens") or 0)
+        prev_completed = (prev.get("status") or "") == "completed"
+        new_completed = (row.get("status") or "") == "completed"
+        if new_tokens > prev_tokens or (new_completed and not prev_completed):
+            best[key] = row
+    return [best[k] for k in order] + passthrough
+
+
 def cmd_summary(rows: list[dict], day: Optional[str], workspace: Optional[str]) -> None:
-    stops = filter_records(rows, day=day, event="stop", workspace=workspace)
+    stops = dedupe_stops_by_generation(
+        filter_records(rows, day=day, event="stop", workspace=workspace)
+    )
     prompts = filter_records(rows, day=day, event="prompt", workspace=workspace)
 
     prompt_sum = 0
@@ -367,6 +404,8 @@ def cmd_chats(n: int) -> None:
     chats = list((load_index().get("chats") or {}).values())
     if not chats and CHATS_DIR.exists():
         for path in CHATS_DIR.glob("*.json"):
+            if not is_chat_data_file(path):
+                continue
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
@@ -470,19 +509,176 @@ def cmd_chat(query: Optional[str], *, expand: bool = False) -> None:
         )
 
 
-def cmd_latest(*, expand: bool = False, markdown: bool = False) -> None:
-    brief = None
-    detail = None
+def workspace_latest_path(workspace: Optional[str]) -> Optional[Path]:
+    if not workspace:
+        return None
+    safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in workspace)
+    if not safe:
+        return None
+    return DATA_DIR / "workspaces" / safe / "latest.json"
+
+
+def chat_latest_path(conversation_id: str) -> Path:
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in conversation_id)
+    return CHATS_DIR / f"{safe}.latest.json"
+
+
+def rebuild_latest_from_chat(chat: dict) -> Optional[dict]:
+    """Build a latest-style payload from a chat file (last turn = this prompt)."""
+    turns = list(chat.get("turns") or [])
+    if not turns:
+        return None
+    last = turns[-1]
+    totals = chat.get("totals") or {}
+    last_cost = estimate_turn(last)
+    chat_cost = estimate_turns(turns)
+    brief = (
+        f"prompt นี้ใช้ไป {fmt_int(last.get('total_tokens'))} tokens"
+        f"{cost_text(last_cost)}"
+        f" · รวม {fmt_int(totals.get('total_tokens'))} tokens"
+        f"{cost_text(chat_cost)}"
+    )
+    if chat.get("prior_untracked"):
+        brief += " · มีประวัติก่อน hook"
+    cid = chat.get("conversation_id")
+    detail_lines = [
+        f"Token usage · {chat.get('workspace') or 'workspace'} · chat {(cid or '')[:8]}",
+        (
+            f"Turn {chat.get('turn_count', 0)}: "
+            f"+{fmt_int(last.get('total_tokens'))} "
+            f"(in {fmt_int(last.get('prompt_tokens'))} / out {fmt_int(last.get('output_tokens'))})"
+            f"{cost_text(last_cost)}"
+        ),
+        (
+            f"Chat total: {fmt_int(totals.get('total_tokens'))} "
+            f"across {chat.get('turn_count', 0)} tracked turn(s)"
+            f"{cost_text(chat_cost)}"
+        ),
+        f"model: {chat.get('model_id') or chat.get('model') or '-'}",
+    ]
+    preview = last.get("prompt_preview")
+    if preview:
+        detail_lines.append(f"prompt: {preview}")
+    return {
+        "ts": chat.get("updated_at") or last.get("ts"),
+        "event": "stop",
+        "brief": brief,
+        "detail": "\n".join(detail_lines),
+        "status": brief,
+        "summary": brief,
+        "conversation_id": cid,
+        "turn": last,
+        "turn_cost": last_cost,
+        "chat_cost": chat_cost,
+        "chat_totals": totals,
+        "turn_count": chat.get("turn_count"),
+        "prior_untracked": bool(chat.get("prior_untracked")),
+        "prior_untracked_turns": chat.get("prior_untracked_turns") or 0,
+        "workspace": chat.get("workspace"),
+    }
+
+
+def load_latest_payload(
+    *,
+    chat_query: Optional[str] = None,
+    workspace: Optional[str] = None,
+) -> Optional[dict]:
+    """Resolve the correct latest snapshot for a chat or workspace.
+
+    Priority:
+      1. Explicit chat id / prefix → that chat's file (authoritative)
+      2. Workspace latest.json from last agent stop → rebuild from that chat
+      3. Most recently updated chat in the workspace (index → chat file)
+      4. Global latest.json (skip sessionEnd-only leftovers when possible)
+    """
+    if chat_query:
+        cid = resolve_chat_id(chat_query)
+        if not cid:
+            return None
+        chat = load_chat_file(cid)
+        if chat:
+            rebuilt = rebuild_latest_from_chat(chat)
+            if rebuilt:
+                return rebuilt
+        snap_path = chat_latest_path(cid)
+        if snap_path.exists():
+            try:
+                data = json.loads(snap_path.read_text(encoding="utf-8"))
+                if isinstance(data, dict) and data.get("brief"):
+                    return data
+            except (OSError, json.JSONDecodeError):
+                pass
+        return None
+
+    def _is_session_end_snapshot(data: dict) -> bool:
+        if data.get("event") == "sessionEnd":
+            return True
+        brief = data.get("brief") or ""
+        return brief.startswith("ปิดแชท")
+
+    def _from_conversation(cid: Optional[str]) -> Optional[dict]:
+        if not cid:
+            return None
+        chat = load_chat_file(cid)
+        if chat:
+            return rebuild_latest_from_chat(chat)
+        return None
+
+    ws = workspace or Path.cwd().name
+    ws_path = workspace_latest_path(ws)
+    if ws_path and ws_path.exists():
+        try:
+            data = json.loads(ws_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and data.get("brief") and not _is_session_end_snapshot(data):
+                rebuilt = _from_conversation(data.get("conversation_id"))
+                if rebuilt:
+                    return rebuilt
+                return data
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    chats = load_index().get("chats") or {}
+    ranked = sorted(
+        (
+            m
+            for m in chats.values()
+            if isinstance(m, dict) and (not ws or m.get("workspace") == ws)
+        ),
+        key=lambda c: c.get("updated_at") or "",
+        reverse=True,
+    )
+    for meta in ranked:
+        rebuilt = _from_conversation(meta.get("conversation_id"))
+        if rebuilt:
+            return rebuilt
+
     if LATEST_JSON_PATH.exists():
         try:
             data = json.loads(LATEST_JSON_PATH.read_text(encoding="utf-8"))
-            brief = data.get("brief")
-            detail = data.get("detail")
+            if isinstance(data, dict) and data.get("brief") and not _is_session_end_snapshot(data):
+                rebuilt = _from_conversation(data.get("conversation_id"))
+                if rebuilt:
+                    return rebuilt
+                return data
         except (OSError, json.JSONDecodeError):
             pass
-    if brief is None and LATEST_PATH.exists():
+    return None
+
+
+def cmd_latest(
+    *,
+    expand: bool = False,
+    markdown: bool = False,
+    chat_query: Optional[str] = None,
+    workspace: Optional[str] = None,
+) -> None:
+    data = load_latest_payload(chat_query=chat_query, workspace=workspace)
+    brief = (data or {}).get("brief") if data else None
+    detail = (data or {}).get("detail") if data else None
+
+    if brief is None and not chat_query and LATEST_PATH.exists():
         brief = LATEST_PATH.read_text(encoding="utf-8").rstrip()
-    if detail is None and LATEST_DETAIL_PATH.exists():
+    if detail is None and not chat_query and LATEST_DETAIL_PATH.exists():
         detail = LATEST_DETAIL_PATH.read_text(encoding="utf-8").rstrip()
 
     if not brief:
@@ -654,7 +850,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             "check-update",
         ],
     )
-    parser.add_argument("chat_id", nargs="?", help="chat id / prefix for `chat`")
+    parser.add_argument("chat_id", nargs="?", help="chat id / prefix for `chat` or `latest`")
     parser.add_argument("-n", type=int, default=20, help="rows for tail/raw/chats")
     parser.add_argument("--workspace", help="filter by workspace folder name")
     parser.add_argument("--day", help="UTC day YYYY-MM-DD (summary)")
@@ -701,7 +897,12 @@ def main(argv: Optional[list[str]] = None) -> int:
             install=args.install,
         )
     if args.command == "latest":
-        cmd_latest(expand=args.expand, markdown=args.markdown)
+        cmd_latest(
+            expand=args.expand,
+            markdown=args.markdown,
+            chat_query=args.chat_id,
+            workspace=args.workspace,
+        )
         return 0
     if args.command == "chats":
         cmd_chats(args.n)
