@@ -172,17 +172,21 @@ Click the status bar item for one menu:
 Format:
 
 ```text
-+<this turn> · ~$0.12 · chat <this chat> · ~$1.40 · repo <all chats in repo>
++<this turn> · ~$0.12 · chat <short-id> <this chat total> · ~$1.40 · repo <all chats in repo>
 ```
 
 `$` amounts are **estimates** from [Cursor Models & Pricing](https://cursor.com/docs/models-and-pricing). They are not invoices.
+
+Closing a chat (`sessionEnd`) does **not** overwrite the status bar — only a completed agent `stop` updates the active snapshot for that workspace.
 
 ## CLI
 
 ```bash
 python3 ~/.cursor/plugins/token-usage/view.py latest
+python3 ~/.cursor/plugins/token-usage/view.py latest --workspace trueid-ios-v3
 python3 ~/.cursor/plugins/token-usage/view.py latest --expand
 python3 ~/.cursor/plugins/token-usage/view.py latest --markdown
+python3 ~/.cursor/plugins/token-usage/view.py latest 4a51dab0   # specific chat
 python3 ~/.cursor/plugins/token-usage/view.py chats
 python3 ~/.cursor/plugins/token-usage/view.py chat            # most recent chat
 python3 ~/.cursor/plugins/token-usage/view.py chat 6067cff6   # by id prefix
@@ -207,7 +211,8 @@ All local:
   usage.jsonl                 # append-only event log
   chats-index.json
   chats/<conversation_id>.json
-  workspaces/<repo>/          # status bar snapshots (per repo)
+  chats/<conversation_id>.latest.json   # per-chat prompt/chat snapshot
+  workspaces/<repo>/          # status bar snapshots (last stop in this repo)
     latest-status.txt
     latest.txt
     latest-detail.txt

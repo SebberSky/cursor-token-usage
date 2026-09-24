@@ -341,21 +341,38 @@ def save_pending(data: dict) -> None:
     atomic_write_json(PENDING_PATH, data)
 
 
-def pop_pending(generation_id: Optional[str], conversation_id: Optional[str]) -> Optional[dict]:
+def _pending_key(
+    generation_id: Optional[str], conversation_id: Optional[str]
+) -> Optional[str]:
     pending = load_pending()
-    key = None
     if generation_id and generation_id in pending:
-        key = generation_id
-    elif conversation_id:
+        return generation_id
+    if conversation_id:
         candidates = [
             (k, v)
             for k, v in pending.items()
             if isinstance(v, dict) and v.get("conversation_id") == conversation_id
         ]
         if candidates:
-            key = sorted(candidates, key=lambda item: item[1].get("ts") or "")[-1][0]
+            return sorted(candidates, key=lambda item: item[1].get("ts") or "")[-1][0]
+    return None
+
+
+def peek_pending(
+    generation_id: Optional[str], conversation_id: Optional[str]
+) -> Optional[dict]:
+    key = _pending_key(generation_id, conversation_id)
     if key is None:
         return None
+    entry = load_pending().get(key)
+    return entry if isinstance(entry, dict) else None
+
+
+def pop_pending(generation_id: Optional[str], conversation_id: Optional[str]) -> Optional[dict]:
+    key = _pending_key(generation_id, conversation_id)
+    if key is None:
+        return None
+    pending = load_pending()
     entry = pending.pop(key, None)
     save_pending(pending)
     return entry if isinstance(entry, dict) else None
@@ -379,6 +396,50 @@ def add_totals(totals: dict, turn: dict) -> dict:
     return out
 
 
+def recompute_totals(turns: list) -> dict:
+    totals = empty_totals()
+    for turn in turns:
+        if isinstance(turn, dict):
+            totals = add_totals(totals, turn)
+    return totals
+
+
+def upsert_turn(chat: dict, turn: dict) -> dict:
+    """Append a turn, or replace an existing one with the same generation_id."""
+    turns = list(chat.get("turns") or [])
+    gen = turn.get("generation_id")
+    if gen:
+        for i, old in enumerate(turns):
+            if not isinstance(old, dict) or old.get("generation_id") != gen:
+                continue
+            old_tokens = int(old.get("total_tokens") or 0)
+            new_tokens = int(turn.get("total_tokens") or 0)
+            old_completed = (old.get("status") or "") == "completed"
+            new_completed = (turn.get("status") or "") == "completed"
+            # Never replace a stronger/completed turn with a weaker abort.
+            if old_tokens > new_tokens or (old_completed and not new_completed and new_tokens == 0):
+                if not old.get("prompt_preview") and turn.get("prompt_preview"):
+                    old["prompt_preview"] = turn.get("prompt_preview")
+                    old["prompt_chars"] = turn.get("prompt_chars")
+                    turns[i] = old
+                    chat["turns"] = turns
+                return chat
+            # Keep prompt preview from whichever stop carried it.
+            if not turn.get("prompt_preview") and old.get("prompt_preview"):
+                turn["prompt_preview"] = old.get("prompt_preview")
+                turn["prompt_chars"] = old.get("prompt_chars")
+            turns[i] = turn
+            chat["turns"] = turns
+            chat["turn_count"] = len(turns)
+            chat["totals"] = recompute_totals(turns)
+            return chat
+    turns.append(turn)
+    chat["turns"] = turns
+    chat["turn_count"] = len(turns)
+    chat["totals"] = add_totals(chat.get("totals") or empty_totals(), turn)
+    return chat
+
+
 def load_chat(conversation_id: str) -> dict:
     path = chat_path(conversation_id)
     data = read_json(path, None)
@@ -395,6 +456,11 @@ def load_chat(conversation_id: str) -> dict:
         "totals": empty_totals(),
         "turns": [],
     }
+
+
+def chat_latest_path(conversation_id: str) -> Path:
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in conversation_id)
+    return CHATS_DIR / f"{safe}.latest.json"
 
 
 def update_index(chat: dict) -> None:
@@ -498,9 +564,10 @@ def build_status_text(
     chat_total = (chat.get("totals") or {}).get("total_tokens")
     turn_cost = estimate_turn(turn)
     chat_cost = estimate_turns(list(chat.get("turns") or []))
+    cid = short_id(chat.get("conversation_id"))
     text = f"+{fmt_compact(turn_total)}"
     text += cost_text(turn_cost, compact=True)
-    text += f" · chat {fmt_compact(chat_total)}"
+    text += f" · chat {cid} {fmt_compact(chat_total)}"
     text += cost_text(chat_cost, compact=True)
     if repo_total is not None:
         text += f" · repo {fmt_compact(repo_total)}"
@@ -674,7 +741,22 @@ def notify_macos(title: str, message: str) -> None:
             pass
 
 
-def write_latest(text: str, chat: dict, turn: dict) -> None:
+def write_latest(
+    text: str,
+    chat: dict,
+    turn: dict,
+    *,
+    update_active: bool = True,
+    event: str = "stop",
+    brief_override: Optional[str] = None,
+    detail_override: Optional[str] = None,
+) -> None:
+    """Persist latest snapshot for this chat; optionally update active workspace/global.
+
+    Per-chat snapshots always update. Workspace/global "active" snapshots update only
+    when update_active=True (agent stop). sessionEnd must not stomp another chat's
+    active prompt/chat totals in the same workspace.
+    """
     ensure_data_dir()
     workspace = chat.get("workspace")
     repo_info = repo_totals_for_workspace(workspace)
@@ -682,18 +764,24 @@ def write_latest(text: str, chat: dict, turn: dict) -> None:
     turn_cost = estimate_turn(turn)
     chat_cost = estimate_turns(list(chat.get("turns") or []))
     repo_cost = repo_cost_for_workspace(workspace)
-    brief = build_brief_text(chat, turn)
-    detail = build_detail_text(chat, turn, repo_info=repo_info)
+    brief = brief_override if brief_override is not None else build_brief_text(chat, turn)
+    detail = (
+        detail_override
+        if detail_override is not None
+        else build_detail_text(chat, turn, repo_info=repo_info)
+    )
     status = build_status_text(
         chat, turn, repo_total=repo_total, repo_cost=repo_cost
     )
+    cid = chat.get("conversation_id")
     payload = {
         "ts": utc_now(),
+        "event": event,
         "brief": brief,
         "detail": detail,
         "status": status,
         "summary": text,
-        "conversation_id": chat.get("conversation_id"),
+        "conversation_id": cid,
         "turn": turn,
         "turn_cost": turn_cost,
         "chat_cost": chat_cost,
@@ -707,7 +795,14 @@ def write_latest(text: str, chat: dict, turn: dict) -> None:
         "repo_cost": repo_cost,
     }
 
-    # Global latest (debugging / last event anywhere).
+    # Always keep a per-chat snapshot so viewers can resolve the right chat.
+    if cid:
+        atomic_write_json(chat_latest_path(cid), payload)
+
+    if not update_active:
+        return
+
+    # Global latest (debugging / last agent stop anywhere).
     LATEST_PATH.write_text(brief + "\n", encoding="utf-8")
     (DATA_DIR / "latest-detail.txt").write_text(detail + "\n", encoding="utf-8")
     (DATA_DIR / "latest-status.txt").write_text(status + "\n", encoding="utf-8")
@@ -787,7 +882,7 @@ def handle_stop(payload: dict) -> dict:
         first_str(payload, "conversation_id", "conversationId", "session_id", "sessionId")
         or "unknown"
     )
-    pending = pop_pending(generation_id, conversation_id)
+    status = first_str(payload, "status") or "unknown"
 
     input_tokens = first_int(payload, "input_tokens", "inputTokens") or 0
     output_tokens = first_int(payload, "output_tokens", "outputTokens") or 0
@@ -814,10 +909,19 @@ def handle_stop(payload: dict) -> dict:
     if total_tokens is None:
         total_tokens = prompt_total + output_tokens
 
+    # Aborted/empty stops often precede a completed stop for the same generation.
+    # Keep pending so the completed stop still gets the prompt preview; replace
+    # the turn via generation_id instead of double-counting.
+    is_final_stop = status == "completed" or (tokens_present and int(total_tokens or 0) > 0)
+    if is_final_stop:
+        pending = pop_pending(generation_id, conversation_id)
+    else:
+        pending = peek_pending(generation_id, conversation_id)
+
     turn = {
         "ts": utc_now(),
         "generation_id": generation_id or (pending or {}).get("generation_id"),
-        "status": first_str(payload, "status") or "unknown",
+        "status": status,
         "model": first_str(payload, "model") or (pending or {}).get("model"),
         "model_id": first_str(payload, "model_id", "modelId") or (pending or {}).get("model_id"),
         "duration_ms": first_int(payload, "duration_ms", "durationMs"),
@@ -847,9 +951,29 @@ def handle_stop(payload: dict) -> dict:
         or chat.get("workspace_roots")
         or []
     )
-    chat["turns"] = list(chat.get("turns") or []) + [turn]
-    chat["turn_count"] = len(chat["turns"])
-    chat["totals"] = add_totals(chat.get("totals") or empty_totals(), turn)
+
+    # Empty/aborted stops often arrive before or after a completed stop for the
+    # same generation. Never let a weaker stop wipe a stronger recorded turn,
+    # bump index freshness, or publish snapshots.
+    should_publish = is_final_stop or int(total_tokens or 0) > 0
+    if not should_publish:
+        append_jsonl(
+            {
+                "ts": turn["ts"],
+                "event": "stop_ignored",
+                "reason": "non_final_empty",
+                "conversation_id": conversation_id,
+                "generation_id": turn.get("generation_id"),
+                "status": status,
+            }
+        )
+        print(
+            f"ignore empty stop · chat {short_id(conversation_id)} · status={status}",
+            file=sys.stderr,
+        )
+        return {}
+
+    chat = upsert_turn(chat, turn)
     chat = apply_prior_history_warning(chat, payload)
 
     atomic_write_json(chat_path(conversation_id), chat)
@@ -891,7 +1015,13 @@ def handle_stop(payload: dict) -> dict:
         turn,
         repo_info=repo_totals_for_workspace(chat.get("workspace")),
     )
-    write_latest(summary, chat, turn)
+    write_latest(
+        summary,
+        chat,
+        turn,
+        update_active=True,
+        event="stop",
+    )
     brief = build_brief_text(chat, turn)
     detail = build_detail_text(chat, turn)
     # Hooks output channel (Output → Hooks)
@@ -951,11 +1081,16 @@ def handle_session_end(payload: dict) -> dict:
         f"```\n{detail}\n```\n\n"
         f"</details>"
     )
-    # Preserve last turn numbers in latest brief/detail files.
-    write_latest(summary, chat, last if last else {"total_tokens": 0})
-    # Overwrite brief for session-end wording.
-    LATEST_PATH.write_text(brief + "\n", encoding="utf-8")
-    (DATA_DIR / "latest-detail.txt").write_text(detail + "\n", encoding="utf-8")
+    # Per-chat only — do not overwrite workspace/global active prompt/chat snapshot.
+    write_latest(
+        summary,
+        chat,
+        last if last else {"total_tokens": 0},
+        update_active=False,
+        event="sessionEnd",
+        brief_override=brief,
+        detail_override=detail,
+    )
     print(brief, file=sys.stderr)
     notify_macos(f"{chat.get('workspace') or 'Cursor'} · chat closed", brief)
     return {"user_message": summary}
