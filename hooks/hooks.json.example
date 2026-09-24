@@ -1,6 +1,12 @@
 {
   "version": 1,
   "hooks": {
+    "sessionStart": [
+      {
+        "command": "/usr/bin/python3 $HOME/.cursor/hooks/token-usage-logger.py sessionStart",
+        "timeout": 10
+      }
+    ],
     "beforeSubmitPrompt": [
       {
         "command": "/usr/bin/python3 $HOME/.cursor/hooks/token-usage-logger.py beforeSubmitPrompt",

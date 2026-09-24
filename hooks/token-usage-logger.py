@@ -103,6 +103,54 @@ def workspace_dir(name: Optional[str]) -> Optional[Path]:
     return path
 
 
+def active_chat_path(workspace: Optional[str]) -> Optional[Path]:
+    ws_dir = workspace_dir(workspace)
+    if ws_dir is None:
+        return None
+    return ws_dir / "active.json"
+
+
+def set_active_chat(workspace: Optional[str], conversation_id: Optional[str]) -> None:
+    path = active_chat_path(workspace)
+    if path is None or not conversation_id:
+        return
+    atomic_write_json(
+        path,
+        {"conversation_id": conversation_id, "ts": utc_now()},
+    )
+
+
+def get_active_chat(workspace: Optional[str]) -> Optional[str]:
+    path = active_chat_path(workspace)
+    if path is None or not path.exists():
+        return None
+    data = read_json(path, None)
+    if not isinstance(data, dict):
+        return None
+    cid = data.get("conversation_id")
+    return cid if isinstance(cid, str) and cid else None
+
+
+def is_workspace_active_chat(workspace: Optional[str], conversation_id: Optional[str]) -> bool:
+    """True if this chat owns the status bar, or no focus has been recorded yet."""
+    if not conversation_id:
+        return False
+    active = get_active_chat(workspace)
+    if not active:
+        return True
+    return active == conversation_id
+
+
+def is_background_agent(payload: dict) -> bool:
+    for key in ("is_background_agent", "isBackgroundAgent", "background_agent", "backgroundAgent"):
+        val = payload.get(key)
+        if val is True:
+            return True
+        if isinstance(val, str) and val.strip().lower() in {"1", "true", "yes"}:
+            return True
+    return False
+
+
 def repo_totals_for_workspace(workspace: Optional[str]) -> dict:
     """Sum tracked totals across all chats in a workspace."""
     totals = empty_totals()
@@ -546,10 +594,19 @@ def fmt_compact(n: Optional[int]) -> str:
     if n is None:
         return "-"
     n = int(n)
-    if abs(n) >= 1_000_000:
-        return f"{n / 1_000_000:.2f}M".rstrip("0").rstrip(".")
-    if abs(n) >= 1_000:
-        return f"{n / 1_000:.1f}k".rstrip("0").rstrip(".")
+    abs_n = abs(n)
+
+    def trim(text: str) -> str:
+        return text.rstrip("0").rstrip(".")
+
+    if abs_n >= 1_000_000_000_000:
+        return trim(f"{n / 1_000_000_000_000:.2f}") + "T"
+    if abs_n >= 1_000_000_000:
+        return trim(f"{n / 1_000_000_000:.2f}") + "B"
+    if abs_n >= 1_000_000:
+        return trim(f"{n / 1_000_000:.2f}") + "M"
+    if abs_n >= 1_000:
+        return trim(f"{n / 1_000:.1f}") + "k"
     return str(n)
 
 
@@ -741,6 +798,77 @@ def notify_macos(title: str, message: str) -> None:
             pass
 
 
+def placeholder_turn() -> dict:
+    """Zeroed turn used when activating a chat that has no completed stops yet."""
+    totals = empty_totals()
+    return {
+        "ts": utc_now(),
+        "generation_id": None,
+        "status": "active",
+        "model": None,
+        "model_id": None,
+        "duration_ms": None,
+        **totals,
+        "tokens_present": False,
+        "prompt_preview": None,
+        "prompt_chars": None,
+    }
+
+
+def last_recorded_turn(chat: dict) -> dict:
+    turns = [t for t in (chat.get("turns") or []) if isinstance(t, dict)]
+    return dict(turns[-1]) if turns else placeholder_turn()
+
+
+def publish_active_chat(
+    conversation_id: Optional[str],
+    *,
+    workspace: Optional[str] = None,
+    workspace_roots: Optional[list] = None,
+    event: str = "focus",
+) -> None:
+    """Point the workspace status bar at this chat's last known prompt/chat totals.
+
+    Used when the user starts/resumes a chat (sessionStart / beforeSubmit) so the
+    bar does not keep showing another chat until the next stop.
+    """
+    if not conversation_id:
+        return
+    ensure_data_dir()
+    chat = load_chat(conversation_id)
+    if workspace:
+        chat["workspace"] = workspace
+    if workspace_roots is not None:
+        chat["workspace_roots"] = workspace_roots
+    # Without a known workspace folder, do not guess (cwd is unreliable for hooks).
+    # Per-chat snapshot still updates; the extension reads workspaces/<repo>/.
+    if not chat.get("workspace"):
+        turn = last_recorded_turn(chat)
+        summary = build_summary_text(chat, turn)
+        write_latest(
+            summary,
+            chat,
+            turn,
+            update_active=False,
+            event=event,
+        )
+        return
+    turn = last_recorded_turn(chat)
+    summary = build_summary_text(
+        chat,
+        turn,
+        repo_info=repo_totals_for_workspace(chat.get("workspace")),
+    )
+    set_active_chat(chat.get("workspace"), conversation_id)
+    write_latest(
+        summary,
+        chat,
+        turn,
+        update_active=True,
+        event=event,
+    )
+
+
 def write_latest(
     text: str,
     chat: dict,
@@ -753,9 +881,9 @@ def write_latest(
 ) -> None:
     """Persist latest snapshot for this chat; optionally update active workspace/global.
 
-    Per-chat snapshots always update. Workspace/global "active" snapshots update only
-    when update_active=True (agent stop). sessionEnd must not stomp another chat's
-    active prompt/chat totals in the same workspace.
+    Per-chat snapshots always update. Workspace/global "active" snapshots update when
+    update_active=True (agent stop, or chat focus via beforeSubmit/sessionStart).
+    sessionEnd must not stomp another chat's active prompt/chat totals.
     """
     ensure_data_dir()
     workspace = chat.get("workspace")
@@ -852,6 +980,16 @@ def handle_before_submit(payload: dict) -> dict:
     save_pending(pending)
     append_jsonl(entry)
 
+    # Point status bar at this chat immediately (do not wait for stop).
+    # Skip background agents — they must not steal the interactive status bar.
+    if not is_background_agent(payload):
+        publish_active_chat(
+            conversation_id,
+            workspace=entry.get("workspace"),
+            workspace_roots=entry.get("workspace_roots") or [],
+            event="prompt",
+        )
+
     # Early warning when continuing a pre-hook chat (before tokens arrive on stop).
     out: dict[str, Any] = {"continue": True}
     if conversation_id:
@@ -871,6 +1009,22 @@ def handle_before_submit(payload: dict) -> dict:
                         warning,
                     )
     return out
+
+
+def handle_session_start(payload: dict) -> dict:
+    """New composer chat — switch status bar off the previous chat right away."""
+    if is_background_agent(payload):
+        return {}
+    conversation_id = first_str(
+        payload, "session_id", "sessionId", "conversation_id", "conversationId"
+    )
+    publish_active_chat(
+        conversation_id,
+        workspace=workspace_label(payload),
+        workspace_roots=payload.get("workspace_roots") or None,
+        event="sessionStart",
+    )
+    return {}
 
 
 def handle_stop(payload: dict) -> dict:
@@ -1015,11 +1169,15 @@ def handle_stop(payload: dict) -> dict:
         turn,
         repo_info=repo_totals_for_workspace(chat.get("workspace")),
     )
+    # Ownership of active.json comes only from beforeSubmit/sessionStart
+    # (publish_active_chat). Re-check immediately before publishing so a late
+    # stop cannot reclaim the bar after the user already switched chats.
+    update_active = is_workspace_active_chat(chat.get("workspace"), conversation_id)
     write_latest(
         summary,
         chat,
         turn,
-        update_active=True,
+        update_active=update_active,
         event="stop",
     )
     brief = build_brief_text(chat, turn)
@@ -1042,6 +1200,22 @@ def handle_stop(payload: dict) -> dict:
     # stop hook does not render user_message in chat; keep brief payload for
     # any Cursor build that surfaces it, plus Hooks channel / macOS alert.
     return {"user_message": brief}
+
+
+def handle_chat_focus(payload: dict) -> dict:
+    """Extension-detected composer focus change (unofficial UI poll)."""
+    if is_background_agent(payload):
+        return {}
+    conversation_id = first_str(
+        payload, "conversation_id", "conversationId", "session_id", "sessionId"
+    )
+    publish_active_chat(
+        conversation_id,
+        workspace=workspace_label(payload),
+        workspace_roots=payload.get("workspace_roots") or None,
+        event="chatFocus",
+    )
+    return {}
 
 
 def handle_session_end(payload: dict) -> dict:
@@ -1112,6 +1286,10 @@ def main() -> int:
             out = handle_before_submit(payload)
         elif event in {"stop", "Stop"}:
             out = handle_stop(payload)
+        elif event in {"sessionStart", "session_start"}:
+            out = handle_session_start(payload)
+        elif event in {"chatFocus", "chat_focus", "focus"}:
+            out = handle_chat_focus(payload)
         elif event in {"sessionEnd", "session_end"}:
             out = handle_session_end(payload)
         else:

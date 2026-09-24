@@ -6,6 +6,9 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
+import sqlite3
+import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +22,92 @@ LATEST_DETAIL_PATH = DATA_DIR / "latest-detail.txt"
 LATEST_JSON_PATH = DATA_DIR / "latest.json"
 INDEX_PATH = DATA_DIR / "chats-index.json"
 CHATS_DIR = DATA_DIR / "chats"
+
+
+def cursor_user_dir() -> Path:
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "Cursor"
+    if sys.platform == "win32":
+        appdata = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
+        return Path(appdata) / "Cursor"
+    return Path.home() / ".config" / "Cursor"
+
+
+def workspace_state_db(folder: Path) -> Optional[Path]:
+    """Locate Cursor workspaceStorage/.../state.vscdb for an open folder path."""
+    root = cursor_user_dir() / "User" / "workspaceStorage"
+    if not root.is_dir():
+        return None
+    target = folder.resolve()
+    from urllib.parse import unquote, urlparse
+
+    for child in root.iterdir():
+        meta = child / "workspace.json"
+        if not meta.is_file():
+            continue
+        try:
+            data = json.loads(meta.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        uri = data.get("folder") if isinstance(data, dict) else None
+        if not isinstance(uri, str) or not uri.startswith("file:"):
+            continue
+        parsed = urlparse(uri)
+        path_part = unquote(parsed.path or "")
+        if sys.platform == "win32" and path_part.startswith("/") and len(path_part) > 2 and path_part[2] == ":":
+            path_part = path_part.lstrip("/")
+        try:
+            if Path(path_part).resolve() == target:
+                db = child / "state.vscdb"
+                return db if db.is_file() else None
+        except OSError:
+            continue
+    return None
+
+
+def read_focused_composer_id(folder: Path) -> Optional[str]:
+    """Unofficial: read last-focused composer id from Cursor workspace state.vscdb.
+
+    Cursor does not expose a public chat-switch event. The IDE stores open/focused
+    composer ids in workspaceStorage ItemTable key `composer.composerData`.
+    """
+    db = workspace_state_db(folder)
+    if db is None:
+        return None
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        try:
+            row = con.execute(
+                "SELECT value FROM ItemTable WHERE key = ?",
+                ("composer.composerData",),
+            ).fetchone()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return None
+    if not row or not row[0]:
+        return None
+    try:
+        data = json.loads(row[0])
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    ids = data.get("lastFocusedComposerIds") or data.get("selectedComposerIds") or []
+    if not isinstance(ids, list) or not ids:
+        return None
+    cid = ids[-1]
+    return cid if isinstance(cid, str) and cid else None
+
+
+def cmd_focused(*, folder: Optional[str] = None) -> int:
+    path = Path(folder).expanduser() if folder else Path.cwd()
+    cid = read_focused_composer_id(path)
+    if not cid:
+        print("", end="")
+        return 1
+    print(cid)
+    return 0
 
 
 def _load_cost_module():
@@ -848,11 +937,16 @@ def main(argv: Optional[list[str]] = None) -> int:
             "latest",
             "version",
             "check-update",
+            "focused",
         ],
     )
     parser.add_argument("chat_id", nargs="?", help="chat id / prefix for `chat` or `latest`")
     parser.add_argument("-n", type=int, default=20, help="rows for tail/raw/chats")
     parser.add_argument("--workspace", help="filter by workspace folder name")
+    parser.add_argument(
+        "--folder",
+        help="absolute workspace folder path (for `focused`)",
+    )
     parser.add_argument("--day", help="UTC day YYYY-MM-DD (summary)")
     parser.add_argument(
         "--expand",
@@ -896,6 +990,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             dismiss=args.dismiss,
             install=args.install,
         )
+    if args.command == "focused":
+        return cmd_focused(folder=args.folder)
     if args.command == "latest":
         cmd_latest(
             expand=args.expand,

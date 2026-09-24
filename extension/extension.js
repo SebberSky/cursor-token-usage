@@ -94,8 +94,87 @@ function workspaceSnapshotDir(name) {
   return path.join(WORKSPACES_DIR, safe);
 }
 
+function chatLatestPath(conversationId) {
+  const safe = String(conversationId).replace(/[^a-zA-Z0-9_-]/g, "_");
+  return path.join(DATA_DIR, "chats", `${safe}.latest.json`);
+}
+
+function chatFilePath(conversationId) {
+  const safe = String(conversationId).replace(/[^a-zA-Z0-9_-]/g, "_");
+  return path.join(DATA_DIR, "chats", `${safe}.json`);
+}
+
+/**
+ * Conversation that owns the status bar for a workspace (set by beforeSubmit/stop).
+ * @param {string} name
+ * @returns {string | null}
+ */
+function readActiveConversationId(name) {
+  const active = readJson(path.join(workspaceSnapshotDir(name), "active.json"));
+  if (!active || typeof active !== "object") {
+    return null;
+  }
+  const cid = active.conversation_id;
+  return cid ? String(cid) : null;
+}
+
+/**
+ * Build a display snapshot from the per-chat ledger when .latest.json is missing.
+ * @param {string} conversationId
+ */
+function snapshotFromChatFile(conversationId) {
+  const chat = readJson(chatFilePath(conversationId));
+  if (!chat || typeof chat !== "object") {
+    return null;
+  }
+  const turns = Array.isArray(chat.turns) ? chat.turns : [];
+  const last = turns.length ? turns[turns.length - 1] : null;
+  const totals = chat.totals || {};
+  return {
+    conversation_id: conversationId,
+    workspace: chat.workspace || null,
+    turn: last || {
+      total_tokens: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+    },
+    chat_totals: totals,
+    turn_count: chat.turn_count || turns.length,
+    prior_untracked: Boolean(chat.prior_untracked),
+    event: "chatFile",
+    brief: "",
+    status: "",
+    detail: "",
+  };
+}
+
+/**
+ * Status bar follows the chat you are *using* (beforeSubmit / stop), not Cursor's
+ * stale lastFocusedComposerIds — that signal does not update reliably on switch and
+ * was stomping the real prompt totals with another chat's last turn.
+ * @param {string[]} names
+ */
 function loadWorkspaceSnapshot(names) {
   for (const name of names) {
+    const activeCid = readActiveConversationId(name);
+    if (activeCid) {
+      const chatData =
+        readJson(chatLatestPath(activeCid)) || snapshotFromChatFile(activeCid);
+      if (
+        chatData &&
+        (chatData.status || chatData.brief || chatData.chat_totals || chatData.turn)
+      ) {
+        return {
+          workspace: name,
+          status: chatData.status || "",
+          brief: chatData.brief || "",
+          detail: chatData.detail || "",
+          data: Object.assign({}, chatData, { conversation_id: activeCid }),
+          focused: true,
+        };
+      }
+    }
+
     const dir = workspaceSnapshotDir(name);
     const status = readText(path.join(dir, "latest-status.txt"));
     const brief = readText(path.join(dir, "latest.txt"));
@@ -108,6 +187,7 @@ function loadWorkspaceSnapshot(names) {
         brief: brief || (data && data.brief) || "",
         detail: detail || (data && data.detail) || "",
         data,
+        focused: false,
       };
     }
   }
@@ -157,8 +237,15 @@ function fmtCompact(n) {
   }
   const value = Number(n);
   const abs = Math.abs(value);
+  const trim = (s) => s.replace(/\.?0+([A-Z])$/, "$1").replace(/(\.\d)0([A-Z])$/, "$1$2");
+  if (abs >= 1_000_000_000_000) {
+    return trim(`${(value / 1_000_000_000_000).toFixed(2)}T`);
+  }
+  if (abs >= 1_000_000_000) {
+    return trim(`${(value / 1_000_000_000).toFixed(2)}B`);
+  }
   if (abs >= 1_000_000) {
-    return `${(value / 1_000_000).toFixed(2)}M`.replace(/\.?0+M$/, "M").replace(/(\.\d)0M$/, "$1M");
+    return trim(`${(value / 1_000_000).toFixed(2)}M`);
   }
   if (abs >= 1_000) {
     return `${(value / 1_000).toFixed(1)}k`.replace(/\.0k$/, "k");
@@ -213,6 +300,7 @@ function extractMetrics(data) {
     data.chat_cost && data.chat_cost.known ? data.chat_cost.usd : null;
   const repoCost =
     data.repo_cost && data.repo_cost.known ? data.repo_cost.usd : null;
+  const cid = data.conversation_id ? String(data.conversation_id) : "";
   return {
     turnTokens: turnTokens != null ? Number(turnTokens) : null,
     chatTokens: chatTokens != null ? Number(chatTokens) : null,
@@ -220,6 +308,7 @@ function extractMetrics(data) {
     turnCost: turnCost != null ? Number(turnCost) : null,
     chatCost: chatCost != null ? Number(chatCost) : null,
     repoCost: repoCost != null ? Number(repoCost) : null,
+    chatId: cid ? cid.slice(0, 8) : null,
     prior: Boolean(data.prior_untracked),
   };
 }
@@ -249,7 +338,10 @@ function formatStatusFromMetrics(metrics, unit) {
   }
 
   if (showTokens && metrics.chatTokens != null) {
-    parts.push(`chat ${fmtCompact(metrics.chatTokens)}`);
+    const id = metrics.chatId ? `${metrics.chatId} ` : "";
+    parts.push(`chat ${id}${fmtCompact(metrics.chatTokens)}`);
+  } else if (metrics.chatId) {
+    parts.push(`chat ${metrics.chatId}`);
   }
   if (showCost) {
     const usd = fmtUsd(metrics.chatCost, { compact: true });
@@ -799,7 +891,8 @@ function refresh() {
   }
 
   const labelSource = buildStatusLabel(snap, unit);
-  const label = labelSource.length > 64 ? `${labelSource.slice(0, 61)}…` : labelSource;
+  // Keep chat id + totals visible; 64 was truncating before the distinctive parts.
+  const label = labelSource.length > 96 ? `${labelSource.slice(0, 93)}…` : labelSource;
   statusBarItem.text = `${icon} ${label || "tokens —"}`;
   statusBarItem.tooltip = [
     `repo: ${snap.workspace}`,
