@@ -175,13 +175,23 @@ Format:
 +<this turn> · ~$0.12 · chat <short-id> <this chat total> · ~$1.40 · repo <all chats in repo>
 ```
 
+Token compact units: `k` / `M` / `B` / `T` (e.g. repo `2.98B` instead of `2984M`).
+
 `$` amounts are **estimates** from [Cursor Models & Pricing](https://cursor.com/docs/models-and-pricing). They are not invoices.
 
-Closing a chat (`sessionEnd`) does **not** overwrite the status bar — only a completed agent `stop` updates the active snapshot for that workspace.
+The status bar follows the **chat you are using** in this workspace (the chat you last sent in / that last completed a turn):
+
+- **Send** (`beforeSubmitPrompt`) → switch to that chat’s last known prompt/chat totals immediately
+- **Agent finishes** (`stop`) → refresh with that turn’s totals if this chat is still active
+- **New chat** (`sessionStart`) → switch to the new chat (zeros until the first stop)
+- **Close chat** (`sessionEnd`) → does **not** stomp another chat’s active snapshot
+
+> Cursor does **not** expose a reliable “chat focused / switched” event. Polling `lastFocusedComposerIds` was tried and made prompt totals look stuck on the wrong chat — it is not used for the status bar.
 
 ## CLI
 
 ```bash
+python3 ~/.cursor/plugins/token-usage/view.py focused --folder "$PWD"
 python3 ~/.cursor/plugins/token-usage/view.py latest
 python3 ~/.cursor/plugins/token-usage/view.py latest --workspace trueid-ios-v3
 python3 ~/.cursor/plugins/token-usage/view.py latest --expand
@@ -212,7 +222,8 @@ All local:
   chats-index.json
   chats/<conversation_id>.json
   chats/<conversation_id>.latest.json   # per-chat prompt/chat snapshot
-  workspaces/<repo>/          # status bar snapshots (last stop in this repo)
+  workspaces/<repo>/          # status bar snapshots (active chat in this repo)
+    active.json               # which conversation_id owns the status bar
     latest-status.txt
     latest.txt
     latest-detail.txt

@@ -349,6 +349,12 @@ hook_script = os.environ["TOKEN_USAGE_HOOK_SCRIPT"]
 example = {
     "version": 1,
     "hooks": {
+        "sessionStart": [
+            {
+                "command": f"{python_bin} {hook_script} sessionStart",
+                "timeout": 10,
+            }
+        ],
         "beforeSubmitPrompt": [
             {
                 "command": f"{python_bin} {hook_script} beforeSubmitPrompt",
